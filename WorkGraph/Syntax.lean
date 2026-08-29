@@ -7,11 +7,13 @@ functions) and §3.3 (validation) of `SPEC.md`.
 Representation notes (design decisions, cross-checked against the spec):
 
 * Allocation IDs (`Alloc`) are a sum of an abstract parameter type `P` (𝔸_π)
-  and an abstract produced-ID name type `K` (𝔸_★).  Global distinctness of
-  produced IDs (2.1: "each fresh output slot of each node instance introduces
-  a *distinct* a") is not baked into the syntax; it is a well-formedness
-  invariant (`WF`, Stage 2), which mirrors the spec's treatment of IDs as
-  global names that survive composition unchanged (needed for D4).
+  and an abstract produced-ID name type `K` (𝔸_★).  Mint names are fields of
+  leaves (1.1), chosen at Instantiate and never changed by composition;
+  global distinctness of produced IDs is a *derived invariant* of 2.4's
+  formation conditions — per-leaf injectivity (`MintInj`) plus operand mint
+  disjointness (`MintDisjoint`), see spec 2.1/D3 — matching the spec's
+  treatment of IDs as global names that survive composition unchanged
+  (needed for D4).
 
 * We use the *eager* representation of composition (2.4): the term
   `W.series w₁ w₂` stores the **already-rewritten** right arm, so the ID-set
@@ -80,12 +82,14 @@ structure NodeSig where
   freshLen : Fin nOut → ℕ
   freshAlignLog : Fin nOut → ℕ
 
-/-- A node *instance*: a signature together with its binding β (2.2) and the
-produced-ID names its fresh slots mint (2.1).  In a standalone leaf the
-binding is parameter-valued (2.2, enforced by `WF` in Stage 2); interior
-leaves of a composite may carry produced-valued bindings installed by Series
-substitution (2.4).  `mint` is total over output slots; it is *read only at
-fresh slots*. -/
+/-- A leaf description: a signature together with its current binding `bind`
+(1.1/2.2) and its mint names (1.1: an injection from the ★ slots into 𝔸_★,
+chosen at Instantiate and never changed by composition).  In a standalone
+leaf the binding is parameter-valued (2.4, Instantiate — enforced by `WF` in
+Stage 2); interior leaves of a composite may carry produced-valued bindings
+installed by Series substitution (2.4).  `mint` is total over output slots
+for convenience; it is *read only at fresh slots*, and injectivity on fresh
+slots is the `MintInj` condition of 2.4. -/
 structure LeafInst (P K : Type*) where
   sig : NodeSig
   bind : Fin sig.nIn → Alloc P K
@@ -129,8 +133,9 @@ def outputs : Set (Alloc P K) := Set.range l.resOut
 /-- Produced IDs minted by this instance: one per **fresh** output slot. -/
 def minted : Set K := { k | ∃ i, l.sig.prov i = none ∧ l.mint i = k }
 
-/-- Within one instance, distinct fresh slots mint distinct IDs
-(2.1: each fresh output slot introduces a *distinct* produced ID). -/
+/-- Within one leaf, `mint` is injective on fresh slots (2.4, Instantiate;
+together with operand mint disjointness this yields 2.1's
+global-distinctness invariant — D3). -/
 def MintInj : Prop :=
   ∀ i i', l.sig.prov i = none → l.sig.prov i' = none →
     l.mint i = l.mint i' → i = i'
@@ -154,14 +159,17 @@ end LeafInst
 
 /-! ## §1.1 Work terms -/
 
-/-- Work terms (1.1): `W ::= Leaf(N, β) | Series(W₁, W₂, θ) | Par(W₁, W₂)`.
+/-- Work terms (1.1, verbatim):
+`W ::= Leaf(N, bind, mint) | Series(W₁, W₂) | Par(W₁, W₂)` — elaborated
+objects carrying current bindings and mint names; β and θ are formation-time
+data, not fields of terms.
 
-The term tree is the *SP tree*.  Per the eager representation of 2.4, the
-`series` constructor stores the right arm with the substitution θ **already
-applied** to its bindings ("the composite contains the rewritten W₂"), so θ
-itself does not appear in the tree; spec-faithful formation of
-`Series(W₁, W₂, θ)` is the smart constructor `W.mkSeries` of Stage 2, and
-terms built only by legal formations are carved out by `WF` (Stage 2). -/
+The term tree is the *SP tree*.  The `series` constructor stores the right
+arm with the Series substitution **already applied** to its bindings ("the
+composite contains the rewritten W₂", 2.4).  Formation syntax: Series
+formation with a given θ is the smart constructor `W.mkSeries` of Stage 2
+(`w₁.mkSeries w₂ θ = W.series w₁ (w₂.rebind θ)`), and terms built only by
+the formations of 2.4 are carved out by `WF` (Stage 2). -/
 inductive W (P K : Type*) where
   | leaf (l : LeafInst P K)
   | series (w₁ w₂ : W P K)

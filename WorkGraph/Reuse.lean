@@ -1,36 +1,34 @@
 /-
-# Work Graph Model — Stage 5: Reuse legality (D14, with D6 en route)
+# Work Graph Model — Stage 5: Reuse legality (D14, with D6-forward en route)
 
-Proves the memory-reuse payoff of the model (D14):
+Proves the memory-reuse payoff of the model (D14) through one generic
+lemma:
 
-* **Series reuse** (`SWF.series_not_mayOverlap_internal_fresh`): in
-  `Series(W₁, W₂)`, an internal allocation of the left arm never conflicts
-  with a fresh allocation of the right arm — *all of `internal(W₁)` is
-  reusable by every fresh allocation in W₂*.  The proof runs exactly along
-  the spec's D6 + D13/4.3 route: every user of `a ∈ internal(W₁)` is a node
-  of W₁ (D6: the producer by D4, consumers because a right-arm binding is
-  either a W₂-minted ID — excluded by global distinctness — or θ-rewritten
-  into `outputs(W₁)` — excluded by internality; τ is excluded because
-  internality survives into the composite by D5), and the Series clause of
-  4.3 orders all of W₁ — dead ends included (D13) — before the right-arm
-  producer.
+* **Sequential blocks** (`SW.SeqBlock`): a designated Series or
+  sequentialized-Par occurrence anywhere in the schedule, by the index
+  blocks of its earlier and later arms; every earlier-block instance
+  structurally precedes every later-block instance
+  (`SeqBlock.cross_sgen` — D13's over-ordering of dead ends included).
 
-* **Sequentialized-Par reuse** (`SWF.par12_not_mayOverlap_internal_fresh`,
-  `SWF.par21_not_mayOverlap_internal_fresh`): the same for `Par` in modes
-  `seq(1,2)` and `seq(2,1)` — the earlier branch's internal buffers are
-  reusable by the later branch.
+* **Generic confined-users reuse** (`not_conflict_of_confined`): users of
+  `a` confined to the earlier block + producers of `b` in the later block
+  ⟹ no conflict.  The three sequential D14 theorems
+  (`SWF.series_not_conflict_internal_fresh`,
+  `SWF.par12_not_conflict_internal_fresh`,
+  `SWF.par21_not_conflict_internal_fresh`) are instantiations, via the
+  D6-forward confinement lemmas (`users_confined_seriesL/parL/parR`) and
+  producer localization; and the contextual versions follow the same way —
+  `SWF.series_reuse_in_conc_context` walks a `Par_conc(Series(W₁,W₂), V)`
+  context as the acceptance case.
 
 * **No concurrent cross-branch reuse**: no order crosses a concurrent Par —
   at the root (`SW.conc_prec_side`) and, contextually, for a concurrent Par
   anywhere inside a larger composite (`SW.ConcBlock.not_cross_prec`, via
-  block-descent of ≺-paths: every generator into or out of a Par arm's
-  index block either stays in the block or hits a sentinel, so a cross path
-  would need a node both before and after the block).  Hence fresh
-  allocations of opposite branches always conflict at the root
-  (`SWF.conc_mayOverlap_fresh`), and in general *any* two allocations with
-  users on opposite branches of any concurrent Par conflict
-  (`SWF.conc_mayOverlap_of_cross_users`) — covering allocations injected
-  into a branch by an enclosing Series as well as branch-local fresh ones.
+  block-descent of ≺-paths).  Hence fresh allocations of opposite branches
+  always conflict at the root (`SWF.conc_conflict_fresh`), and in general
+  *any* two allocations with users on opposite branches of any concurrent
+  Par conflict (`SWF.conc_conflict_of_cross_users`) — covering allocations
+  injected into a branch by an enclosing Series.
 -/
 import WorkGraph.Arena
 
@@ -71,264 +69,381 @@ theorem SW.conc_prec_side {s₁ s₂ : SW P K} {a b : PNode}
       | fromSrc h' =>
           exact absurd hab SW.not_prec_src
 
-/-! ## D14: Series reuse -/
+/-! ## D14: sequential blocks and the generic confined-users reuse lemma
+
+A `SeqBlock` designates an *ordered* pair of arm blocks anywhere in the
+schedule: a Series, or a sequentialized Par, whose **earlier** arm occupies
+the instance-index block `[elo, ehi)` and **later** arm `[llo, lhi)` (for
+`seq(2,1)` the earlier arm is the *right* arm, so the earlier block is the
+higher index range).  Every earlier-block instance structurally precedes
+every later-block instance (`SeqBlock.cross_sgen`), so reuse legality for
+all three sequential composites — at the root or in any context — is one
+lemma, `not_conflict_of_confined`, instantiated with confinement facts. -/
+
+/-- A designated Series / sequentialized-Par occurrence, by the index blocks
+of its earlier arm `[elo, ehi)` and later arm `[llo, lhi)`. -/
+inductive SW.SeqBlock : SW P K → ℕ → ℕ → ℕ → ℕ → Prop where
+  | series {s₁ s₂ : SW P K} :
+      SW.SeqBlock (.series s₁ s₂) 0 s₁.nLeaves
+        s₁.nLeaves (s₁.nLeaves + s₂.nLeaves)
+  | par12 {s₁ s₂ : SW P K} :
+      SW.SeqBlock (.par .seq12 s₁ s₂) 0 s₁.nLeaves
+        s₁.nLeaves (s₁.nLeaves + s₂.nLeaves)
+  | par21 {s₁ s₂ : SW P K} :
+      SW.SeqBlock (.par .seq21 s₁ s₂) s₁.nLeaves (s₁.nLeaves + s₂.nLeaves)
+        0 s₁.nLeaves
+  | seriesL {s₁ s₂ : SW P K} {elo ehi llo lhi : ℕ} :
+      SW.SeqBlock s₁ elo ehi llo lhi →
+      SW.SeqBlock (.series s₁ s₂) elo ehi llo lhi
+  | seriesR {s₁ s₂ : SW P K} {elo ehi llo lhi : ℕ} :
+      SW.SeqBlock s₂ elo ehi llo lhi →
+      SW.SeqBlock (.series s₁ s₂) (s₁.nLeaves + elo) (s₁.nLeaves + ehi)
+        (s₁.nLeaves + llo) (s₁.nLeaves + lhi)
+  | parL {m : Mode} {s₁ s₂ : SW P K} {elo ehi llo lhi : ℕ} :
+      SW.SeqBlock s₁ elo ehi llo lhi →
+      SW.SeqBlock (.par m s₁ s₂) elo ehi llo lhi
+  | parR {m : Mode} {s₁ s₂ : SW P K} {elo ehi llo lhi : ℕ} :
+      SW.SeqBlock s₂ elo ehi llo lhi →
+      SW.SeqBlock (.par m s₁ s₂) (s₁.nLeaves + elo) (s₁.nLeaves + ehi)
+        (s₁.nLeaves + llo) (s₁.nLeaves + lhi)
+
+/-- Every earlier-block instance structurally precedes every later-block
+instance — the 4.3 clause of the designated Series/seq-Par, lifted through
+the context (this is also D13's load-bearing over-ordering: dead ends of the
+earlier arm are ordered too). -/
+theorem SW.SeqBlock.cross_sgen {s : SW P K} {elo ehi llo lhi : ℕ}
+    (hb : SW.SeqBlock s elo ehi llo lhi) :
+    ∀ {i j : ℕ}, elo ≤ i → i < ehi → llo ≤ j → j < lhi → SW.SGen s i j := by
+  induction hb with
+  | @series s₁ s₂ =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      have h := SW.SGen.seriesCross (s₁ := s₁) (s₂ := s₂) (i := i)
+        (j := j - s₁.nLeaves) hi₂ (by omega)
+      have e : s₁.nLeaves + (j - s₁.nLeaves) = j := by omega
+      rwa [e] at h
+  | @par12 s₁ s₂ =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      have h := SW.SGen.parCross12 (s₁ := s₁) (s₂ := s₂) (i := i)
+        (j := j - s₁.nLeaves) hi₂ (by omega)
+      have e : s₁.nLeaves + (j - s₁.nLeaves) = j := by omega
+      rwa [e] at h
+  | @par21 s₁ s₂ =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      have h := SW.SGen.parCross21 (s₁ := s₁) (s₂ := s₂)
+        (i := i - s₁.nLeaves) (j := j) (by omega) hj₂
+      have e : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
+      rwa [e] at h
+  | seriesL hb ih =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      exact .seriesLeft (ih hi₁ hi₂ hj₁ hj₂)
+  | @seriesR s₁ s₂ elo ehi llo lhi hb ih =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      have h := SW.SGen.seriesRight (s₁ := s₁) (s₂ := s₂)
+        (i := i - s₁.nLeaves) (j := j - s₁.nLeaves)
+        (ih (by omega) (by omega) (by omega) (by omega))
+      have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
+      have e₂ : s₁.nLeaves + (j - s₁.nLeaves) = j := by omega
+      rwa [e₁, e₂] at h
+  | parL hb ih =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      exact .parLeft (ih hi₁ hi₂ hj₁ hj₂)
+  | @parR m s₁ s₂ elo ehi llo lhi hb ih =>
+      intro i j hi₁ hi₂ hj₁ hj₂
+      have h := SW.SGen.parRight (m := m) (s₁ := s₁) (s₂ := s₂)
+        (i := i - s₁.nLeaves) (j := j - s₁.nLeaves)
+        (ih (by omega) (by omega) (by omega) (by omega))
+      have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
+      have e₂ : s₁.nLeaves + (j - s₁.nLeaves) = j := by omega
+      rwa [e₁, e₂] at h
+
+/-- **Generic sequential reuse** (D14, unfolding 4.4/4.5): if every user of
+`a` lies in the earlier block of a `SeqBlock` and every producer of `b` in
+its later block, then `a` is finished before `b`'s producer starts — no
+conflict, root-level or in context. -/
+theorem not_conflict_of_confined {s : SW P K}
+    {elo ehi llo lhi : ℕ} (hb : SW.SeqBlock s elo ehi llo lhi)
+    {a b : Alloc P K}
+    (husers : ∀ n, IsUser s a n → ∃ i, n = .inst i ∧ elo ≤ i ∧ i < ehi)
+    (hprod : ∀ m, IsProducer s b m → ∃ j, m = .inst j ∧ llo ≤ j ∧ j < lhi) :
+    ¬ Conflict s a b := fun hov =>
+  hov.1 fun n hn m hm => by
+    obtain ⟨i, rfl, hi₁, hi₂⟩ := husers n hn
+    obtain ⟨j, rfl, hj₁, hj₂⟩ := hprod m hm
+    exact Relation.TransGen.single (SW.Gen.struct (hb.cross_sgen hi₁ hi₂ hj₁ hj₂))
+
+/-! ### Confinement and localization facts (D6, forward direction) -/
+
+/-- Producers of an ID minted in the right arm are right-block instances. -/
+theorem producer_localized_right {s t₁ t₂ : SW P K}
+    (hsl : s.leaves = t₁.leaves ++ t₂.leaves)
+    (hd : MintDisjoint t₁.forget t₂.forget) {k : K}
+    (hk : k ∈ t₂.forget.minted) :
+    ∀ m, IsProducer s (.prod k) m →
+      ∃ j, m = .inst j ∧ t₁.nLeaves ≤ j ∧ j < t₁.nLeaves + t₂.nLeaves := by
+  intro m hm
+  simp only [IsProducer] at hm
+  obtain ⟨j, rfl, hm⟩ := hm
+  obtain ⟨hge, hm₂⟩ := hm.resolve_right hsl hd hk
+  exact ⟨j, rfl, hge, by have := hm₂.lt_nLeaves; omega⟩
+
+/-- Producers of an ID minted in the left arm are left-block instances. -/
+theorem producer_localized_left {s t₁ t₂ : SW P K}
+    (hsl : s.leaves = t₁.leaves ++ t₂.leaves)
+    (hd : MintDisjoint t₁.forget t₂.forget) {k : K}
+    (hk : k ∈ t₁.forget.minted) :
+    ∀ m, IsProducer s (.prod k) m → ∃ j, m = .inst j ∧ j < t₁.nLeaves := by
+  intro m hm
+  simp only [IsProducer] at hm
+  obtain ⟨j, rfl, hm⟩ := hm
+  exact ⟨j, rfl, (hm.resolve_left hsl hd hk).1⟩
+
+/-- **D6 (forward), Series**: every user of a left-internal allocation of a
+series composite is a left-arm instance — the producer by D4 + mint
+disjointness, consumers because a right-arm binding is either a right-minted
+ID (excluded by distinctness) or θ-rewritten into `outputs(W₁)` (excluded by
+internality), and τ because internality survives into the composite (D5). -/
+theorem SWF.users_confined_seriesL {s₁ s₂ : SW P K} {θ : Subst P K}
+    (h₁ : SWF s₁) (h₂ : SWF s₂) (hθ : ThetaFits θ s₁.forget s₂.forget)
+    (hd : MintDisjoint s₁.forget s₂.forget)
+    {a : Alloc P K} (ha : a ∈ s₁.forget.internal) :
+    ∀ n, IsUser (SW.series s₁ (s₂.rebind θ)) a n →
+      ∃ i, n = .inst i ∧ i < s₁.nLeaves := by
+  have hwf₁ := h₁.forget_wf
+  have hwf₂ := h₂.forget_wf
+  have hpd : θ.ParamDom := hθ.paramDom hwf₂
+  obtain ⟨hbuf, hni, hno⟩ := ha
+  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
+    cases a with
+    | param p => exact absurd (hwf₁.param_mem_inputs_of_mem_buffers p hbuf) hni
+    | prod k' => exact ⟨k', rfl⟩
+  have hk'₁ : k' ∈ s₁.forget.minted :=
+    hwf₁.mem_minted_of_prod_mem_buffers k' hbuf
+  have hint : Alloc.prod k' ∈ (SW.series s₁ (s₂.rebind θ)).forget.internal := by
+    have hforget : (SW.series s₁ (s₂.rebind θ)).forget =
+        s₁.forget.mkSeries s₂.forget θ := by
+      simp [W.mkSeries]
+    rw [hforget, hwf₁.internal_mkSeries hwf₂ hθ hd]
+    exact Or.inl (Or.inl ⟨hbuf, hni, hno⟩)
+  rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
+  · simp only [IsProducer] at hp
+    obtain ⟨i₀, rfl, hm⟩ := hp
+    exact ⟨i₀, rfl, (hm.resolve_left rfl (hd.rebind_right θ) hk'₁).1⟩
+  · refine ⟨i, rfl, ?_⟩
+    rcases consumesAt_series_iff.mp hc with ⟨hi, -⟩ | ⟨-, hc'⟩
+    · exact hi
+    · exfalso
+      obtain ⟨b₀, hc₂, hab⟩ := consumesAt_rebind_iff.mp hc'
+      cases b₀ with
+      | prod k₀ =>
+          rw [hpd.apply_prod] at hab
+          cases hab
+          exact hd k' hk'₁
+            (hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers)
+      | param q =>
+          have hqi : Alloc.param q ∈ s₂.forget.inputs :=
+            hwf₂.param_mem_inputs_of_mem_buffers q hc₂.mem_buffers
+          obtain ⟨c, hcq⟩ := Option.isSome_iff_exists.mp ((hθ.dom_eq _).mpr hqi)
+          rw [θ.apply_of_some hcq] at hab
+          subst hab
+          exact hno (hθ.codom _ _ hcq)
+  · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
+
+/-- **D6 (forward), Par (left)**: every user of a left-internal allocation
+of a Par composite — in any mode — is a left-branch instance. -/
+theorem SWF.users_confined_parL {m : Mode} {s₁ s₂ : SW P K}
+    (h₁ : SWF s₁) (h₂ : SWF s₂) (hd : MintDisjoint s₁.forget s₂.forget)
+    {a : Alloc P K} (ha : a ∈ s₁.forget.internal) :
+    ∀ n, IsUser (SW.par m s₁ s₂) a n → ∃ i, n = .inst i ∧ i < s₁.nLeaves := by
+  have hwf₁ := h₁.forget_wf
+  have hwf₂ := h₂.forget_wf
+  obtain ⟨hbuf, hni, hno⟩ := ha
+  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
+    cases a with
+    | param p => exact absurd (hwf₁.param_mem_inputs_of_mem_buffers p hbuf) hni
+    | prod k' => exact ⟨k', rfl⟩
+  have hk'₁ : k' ∈ s₁.forget.minted :=
+    hwf₁.mem_minted_of_prod_mem_buffers k' hbuf
+  have hint : Alloc.prod k' ∈ (SW.par m s₁ s₂).forget.internal := by
+    have he : (SW.par m s₁ s₂).forget = W.par s₁.forget s₂.forget := rfl
+    rw [he, hwf₁.internal_par hwf₂ hd]
+    exact Or.inl ⟨hbuf, hni, hno⟩
+  rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
+  · simp only [IsProducer] at hp
+    obtain ⟨i₀, rfl, hm⟩ := hp
+    exact ⟨i₀, rfl, (hm.resolve_left rfl hd hk'₁).1⟩
+  · refine ⟨i, rfl, ?_⟩
+    rcases consumesAt_par_iff.mp hc with ⟨hi, -⟩ | ⟨-, hc₂⟩
+    · exact hi
+    · exact (hd k' hk'₁
+        (hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers)).elim
+  · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
+
+/-- **D6 (forward), Par (right)**: every user of a right-internal allocation
+of a Par composite — in any mode — is a right-branch instance. -/
+theorem SWF.users_confined_parR {m : Mode} {s₁ s₂ : SW P K}
+    (h₁ : SWF s₁) (h₂ : SWF s₂) (hd : MintDisjoint s₁.forget s₂.forget)
+    {a : Alloc P K} (ha : a ∈ s₂.forget.internal) :
+    ∀ n, IsUser (SW.par m s₁ s₂) a n →
+      ∃ i, n = .inst i ∧ s₁.nLeaves ≤ i ∧ i < s₁.nLeaves + s₂.nLeaves := by
+  have hwf₁ := h₁.forget_wf
+  have hwf₂ := h₂.forget_wf
+  obtain ⟨hbuf, hni, hno⟩ := ha
+  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
+    cases a with
+    | param p => exact absurd (hwf₂.param_mem_inputs_of_mem_buffers p hbuf) hni
+    | prod k' => exact ⟨k', rfl⟩
+  have hk'₂ : k' ∈ s₂.forget.minted :=
+    hwf₂.mem_minted_of_prod_mem_buffers k' hbuf
+  have hint : Alloc.prod k' ∈ (SW.par m s₁ s₂).forget.internal := by
+    have he : (SW.par m s₁ s₂).forget = W.par s₁.forget s₂.forget := rfl
+    rw [he, hwf₁.internal_par hwf₂ hd]
+    exact Or.inr ⟨hbuf, hni, hno⟩
+  rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
+  · simp only [IsProducer] at hp
+    obtain ⟨i₀, rfl, hm⟩ := hp
+    obtain ⟨hge, hm₂⟩ := hm.resolve_right rfl hd hk'₂
+    exact ⟨i₀, rfl, hge, by have := hm₂.lt_nLeaves; omega⟩
+  · rcases consumesAt_par_iff.mp hc with ⟨-, hc₁⟩ | ⟨hge, hc₂⟩
+    · exact (hd k'
+        (hwf₁.mem_minted_of_prod_mem_buffers k' hc₁.mem_buffers) hk'₂).elim
+    · exact ⟨i, rfl, hge, by have := hc₂.lt_nLeaves; omega⟩
+  · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
+
+/-! ### The three sequential D14 theorems, as instantiations -/
 
 /-- **D14 (Series)**: `a ∈ internal(W₁)` never conflicts with a fresh
 allocation of the right arm — `internal(W₁)` is fully reusable past the
 Series boundary. -/
-theorem SWF.series_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
+theorem SWF.series_not_conflict_internal_fresh {s₁ s₂ : SW P K}
     {θ : Subst P K} (h₁ : SWF s₁) (h₂ : SWF s₂)
     (hθ : ThetaFits θ s₁.forget s₂.forget)
     (hd : MintDisjoint s₁.forget s₂.forget)
     {a : Alloc P K} (ha : a ∈ s₁.forget.internal)
     {k : K} (hk : k ∈ s₂.forget.minted) :
-    ¬ MayOverlap (SW.series s₁ (s₂.rebind θ)) a (.prod k) := by
-  set s : SW P K := SW.series s₁ (s₂.rebind θ) with hs_def
-  have hswf : SWF s := SWF.series h₁ h₂ hθ hd
-  have hwf₁ := h₁.forget_wf
-  have hwf₂ := h₂.forget_wf
-  have hpd : θ.ParamDom := hθ.paramDom hwf₂
-  have hlen : s₁.leaves.length = s₁.nLeaves := rfl
-  obtain ⟨hb, hni, hno⟩ := ha
-  -- a is a produced ID minted in the left arm (D3 + D4)
-  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
-    cases a with
-    | param p => exact absurd (hwf₁.param_mem_inputs_of_mem_buffers p hb) hni
-    | prod k' => exact ⟨k', rfl⟩
-  have hk'₁ : k' ∈ s₁.forget.minted := hwf₁.mem_minted_of_prod_mem_buffers k' hb
-  -- the forgotten composite is the spec Series composite
-  have hforget : s.forget = s₁.forget.mkSeries s₂.forget θ := by
-    simp [hs_def, W.mkSeries]
-  -- internality survives into the composite (D5), so τ is not a user of a
-  have hint : Alloc.prod k' ∈ s.forget.internal := by
-    rw [hforget, hwf₁.internal_mkSeries hwf₂ hθ hd]
-    exact Or.inl (Or.inl ⟨hb, hni, hno⟩)
-  -- every user of a is an instance of the left arm (D6)
-  have huser : ∀ n, IsUser s (Alloc.prod k') n → ∃ i, n = .inst i ∧ i < s₁.nLeaves := by
-    rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
-    · -- the producer: its minting instance, in the left arm by distinctness
-      obtain ⟨i₀, rfl, hm⟩ := hp
-      refine ⟨i₀, rfl, ?_⟩
-      unfold MintsAt at hm
-      rw [hs_def, SW.leaves_series, atIdx_append] at hm
-      rcases hm with ⟨hi₀, _⟩ | ⟨_, hm⟩
-      · rwa [hlen] at hi₀
-      · exfalso
-        rw [SW.leaves_rebind, atIdx_map] at hm
-        simp only [LeafInst.minted_rebind] at hm
-        exact hd k' hk'₁ (MintsAt.mem_minted hm)
-    · -- a consumer: a right-arm slot cannot resolve to a (D4 + internality)
-      refine ⟨i, rfl, ?_⟩
-      unfold ConsumesAt at hc
-      rw [hs_def, SW.leaves_series, atIdx_append] at hc
-      rcases hc with ⟨hi, _⟩ | ⟨_, hc⟩
-      · rwa [hlen] at hi
-      · exfalso
-        rw [SW.leaves_rebind, atIdx_map] at hc
-        obtain ⟨l₂, hl₂, hmem⟩ := hc
-        rw [LeafInst.inputs_rebind] at hmem
-        obtain ⟨b₀, hb₀, hab⟩ := hmem
-        have hc₂ : ConsumesAt s₂ _ b₀ := ⟨l₂, hl₂, hb₀⟩
-        cases b₀ with
-        | prod k₀ =>
-            rw [hpd.apply_prod] at hab
-            cases hab
-            exact hd k' hk'₁
-              (hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers)
-        | param q =>
-            have hqi : Alloc.param q ∈ s₂.forget.inputs :=
-              hwf₂.param_mem_inputs_of_mem_buffers q hc₂.mem_buffers
-            obtain ⟨c, hcq⟩ := Option.isSome_iff_exists.mp ((hθ.dom_eq _).mpr hqi)
-            rw [θ.apply_of_some hcq] at hab
-            subst hab
-            exact hno (hθ.codom _ _ hcq)
-    · -- τ: excluded, a is internal to the composite
-      exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
-  -- the producer of the fresh right-arm allocation sits in the right arm
-  intro hov
-  refine hov.1 ?_
-  rintro n hn m hm
-  obtain ⟨i, rfl, hi⟩ := huser n hn
-  obtain ⟨i₀, rfl, hm⟩ := hm
-  have hlt := hm.lt_nLeaves
-  have hm₂ : s₁.nLeaves ≤ i₀ := by
-    unfold MintsAt at hm
-    rw [hs_def, SW.leaves_series, atIdx_append] at hm
-    rcases hm with ⟨_, hm⟩ | ⟨hi₀, _⟩
-    · exact absurd (hd k (MintsAt.mem_minted hm) hk) not_false
-    · rwa [hlen] at hi₀
-  -- the Series clause of 4.3 orders all of W₁ before every node of W₂ (D13)
-  have hcross : SW.SGen s i (s₁.nLeaves + (i₀ - s₁.nLeaves)) := by
-    rw [hs_def]
-    refine SW.SGen.seriesCross hi ?_
-    rw [hs_def, SW.nLeaves_series] at hlt
-    omega
-  have e : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
-  rw [e] at hcross
-  exact Relation.TransGen.single (SW.Gen.struct hcross)
-
-/-! ## D14: sequentialized-Par reuse -/
+    ¬ Conflict (SW.series s₁ (s₂.rebind θ)) a (.prod k) := by
+  refine not_conflict_of_confined SW.SeqBlock.series ?_ ?_
+  · intro n hn
+    obtain ⟨i, rfl, hi⟩ := SWF.users_confined_seriesL h₁ h₂ hθ hd ha n hn
+    exact ⟨i, rfl, Nat.zero_le _, hi⟩
+  · exact producer_localized_right rfl (hd.rebind_right θ) (by simpa using hk)
 
 /-- **D14 (sequentialized Par, `seq(1,2)`)**: an internal allocation of the
 first branch never conflicts with a fresh allocation of the second —
-internal buffers of the earlier branch are reusable by the later one.
-(The `seq(2,1)` mirror is `SWF.par21_not_mayOverlap_internal_fresh`.) -/
-theorem SWF.par12_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
+internal buffers of the earlier branch are reusable by the later one. -/
+theorem SWF.par12_not_conflict_internal_fresh {s₁ s₂ : SW P K}
     (h₁ : SWF s₁) (h₂ : SWF s₂)
     (hd : MintDisjoint s₁.forget s₂.forget)
     {a : Alloc P K} (ha : a ∈ s₁.forget.internal)
     {k : K} (hk : k ∈ s₂.forget.minted) :
-    ¬ MayOverlap (SW.par .seq12 s₁ s₂) a (.prod k) := by
-  set s : SW P K := SW.par .seq12 s₁ s₂ with hs_def
-  have hwf₁ := h₁.forget_wf
-  have hwf₂ := h₂.forget_wf
-  have hlen : s₁.leaves.length = s₁.nLeaves := rfl
-  obtain ⟨hb, hni, hno⟩ := ha
-  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
-    cases a with
-    | param p => exact absurd (hwf₁.param_mem_inputs_of_mem_buffers p hb) hni
-    | prod k' => exact ⟨k', rfl⟩
-  have hk'₁ : k' ∈ s₁.forget.minted := hwf₁.mem_minted_of_prod_mem_buffers k' hb
-  -- internality survives into the composite (D5 for Par)
-  have hint : Alloc.prod k' ∈ s.forget.internal := by
-    have : s.forget = W.par s₁.forget s₂.forget := rfl
-    rw [this, hwf₁.internal_par hwf₂ hd]
-    exact Or.inl ⟨hb, hni, hno⟩
-  have huser : ∀ n, IsUser s (Alloc.prod k') n → ∃ i, n = .inst i ∧ i < s₁.nLeaves := by
-    rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
-    · obtain ⟨i₀, rfl, hm⟩ := hp
-      refine ⟨i₀, rfl, ?_⟩
-      unfold MintsAt at hm
-      rw [hs_def, SW.leaves_par, atIdx_append] at hm
-      rcases hm with ⟨hi₀, _⟩ | ⟨_, hm⟩
-      · rwa [hlen] at hi₀
-      · exact absurd (hd k' hk'₁ (MintsAt.mem_minted hm)) not_false
-    · refine ⟨i, rfl, ?_⟩
-      unfold ConsumesAt at hc
-      rw [hs_def, SW.leaves_par, atIdx_append] at hc
-      rcases hc with ⟨hi, _⟩ | ⟨_, hc⟩
-      · rwa [hlen] at hi
-      · exfalso
-        have hc₂ : ConsumesAt s₂ _ (Alloc.prod k') := hc
-        exact hd k' hk'₁
-          (hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers)
-    · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
-  intro hov
-  refine hov.1 ?_
-  rintro n hn m hm
-  obtain ⟨i, rfl, hi⟩ := huser n hn
-  obtain ⟨i₀, rfl, hm⟩ := hm
-  have hlt := hm.lt_nLeaves
-  have hm₂ : s₁.nLeaves ≤ i₀ := by
-    unfold MintsAt at hm
-    rw [hs_def, SW.leaves_par, atIdx_append] at hm
-    rcases hm with ⟨_, hm⟩ | ⟨hi₀, _⟩
-    · exact absurd (hd k (MintsAt.mem_minted hm) hk) not_false
-    · rwa [hlen] at hi₀
-  have hcross : SW.SGen s i (s₁.nLeaves + (i₀ - s₁.nLeaves)) := by
-    rw [hs_def]
-    refine SW.SGen.parCross12 hi ?_
-    rw [hs_def, SW.nLeaves_par] at hlt
-    omega
-  have e : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
-  rw [e] at hcross
-  exact Relation.TransGen.single (SW.Gen.struct hcross)
+    ¬ Conflict (SW.par .seq12 s₁ s₂) a (.prod k) := by
+  refine not_conflict_of_confined SW.SeqBlock.par12 ?_ ?_
+  · intro n hn
+    obtain ⟨i, rfl, hi⟩ := SWF.users_confined_parL h₁ h₂ hd ha n hn
+    exact ⟨i, rfl, Nat.zero_le _, hi⟩
+  · exact producer_localized_right rfl hd hk
 
-/-- **D14 (sequentialized Par, `seq(2,1)`)**: the mirror image — an internal
+/-- **D14 (sequentialized Par, `seq(2,1)`)**: the mirror — an internal
 allocation of the *second* branch (which `seq(2,1)` runs first) never
-conflicts with a fresh allocation of the first: internal buffers of the
-earlier branch are reusable by the later one, whichever way the Par is
-sequentialized. -/
-theorem SWF.par21_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
+conflicts with a fresh allocation of the first. -/
+theorem SWF.par21_not_conflict_internal_fresh {s₁ s₂ : SW P K}
     (h₁ : SWF s₁) (h₂ : SWF s₂)
     (hd : MintDisjoint s₁.forget s₂.forget)
     {a : Alloc P K} (ha : a ∈ s₂.forget.internal)
     {k : K} (hk : k ∈ s₁.forget.minted) :
-    ¬ MayOverlap (SW.par .seq21 s₁ s₂) a (.prod k) := by
-  set s : SW P K := SW.par .seq21 s₁ s₂ with hs_def
+    ¬ Conflict (SW.par .seq21 s₁ s₂) a (.prod k) := by
+  refine not_conflict_of_confined SW.SeqBlock.par21 ?_ ?_
+  · exact SWF.users_confined_parR h₁ h₂ hd ha
+  · intro m hm
+    obtain ⟨j, rfl, hj⟩ := producer_localized_left rfl hd hk m hm
+    exact ⟨j, rfl, Nat.zero_le _, hj⟩
+
+/-! ### Contextual acceptance: sequential reuse inside a larger composite -/
+
+/-- **D14, contextual (acceptance test)**: inside
+`Par_conc(Series(W₁, W₂), V)`, the internal allocations of `W₁` are still
+reusable by `W₂`'s fresh allocations — the confinement and localization
+facts walk the enclosing context, and the `SeqBlock` context constructors
+carry the ordering. -/
+theorem SWF.series_reuse_in_conc_context {s₁ s₂ v : SW P K} {θ : Subst P K}
+    (h₁ : SWF s₁) (h₂ : SWF s₂) (hθ : ThetaFits θ s₁.forget s₂.forget)
+    (hd : MintDisjoint s₁.forget s₂.forget) (hv : SWF v)
+    (hdv : MintDisjoint (SW.series s₁ (s₂.rebind θ)).forget v.forget)
+    {a : Alloc P K} (ha : a ∈ s₁.forget.internal)
+    {k : K} (hk : k ∈ s₂.forget.minted) :
+    ¬ Conflict (SW.par .conc (SW.series s₁ (s₂.rebind θ)) v) a (.prod k) := by
   have hwf₁ := h₁.forget_wf
   have hwf₂ := h₂.forget_wf
-  have hlen : s₁.leaves.length = s₁.nLeaves := rfl
-  obtain ⟨hb, hni, hno⟩ := ha
+  have hwfv := hv.forget_wf
+  have htwf : SWF (SW.series s₁ (s₂.rebind θ)) := SWF.series h₁ h₂ hθ hd
+  -- a is a produced ID minted in W₁, internal to the series composite
+  obtain ⟨hbuf, hni, hno⟩ := ha
   obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
     cases a with
-    | param p => exact absurd (hwf₂.param_mem_inputs_of_mem_buffers p hb) hni
+    | param p => exact absurd (hwf₁.param_mem_inputs_of_mem_buffers p hbuf) hni
     | prod k' => exact ⟨k', rfl⟩
-  have hk'₂ : k' ∈ s₂.forget.minted := hwf₂.mem_minted_of_prod_mem_buffers k' hb
-  -- internality survives into the composite (D5 for Par)
-  have hint : Alloc.prod k' ∈ s.forget.internal := by
-    have : s.forget = W.par s₁.forget s₂.forget := rfl
-    rw [this, hwf₁.internal_par hwf₂ hd]
-    exact Or.inr ⟨hb, hni, hno⟩
-  -- every user of a is an instance of the second branch (D6)
-  have huser : ∀ n, IsUser s (Alloc.prod k') n →
-      ∃ i, n = .inst i ∧ s₁.nLeaves ≤ i ∧ i - s₁.nLeaves < s₂.nLeaves := by
+  have hk'₁ : k' ∈ s₁.forget.minted :=
+    hwf₁.mem_minted_of_prod_mem_buffers k' hbuf
+  have hk't : k' ∈ (SW.series s₁ (s₂.rebind θ)).forget.minted := Or.inl hk'₁
+  have hkt : k ∈ (SW.series s₁ (s₂.rebind θ)).forget.minted :=
+    Or.inr (by simpa using hk)
+  have hint : Alloc.prod k' ∈ (SW.series s₁ (s₂.rebind θ)).forget.internal := by
+    have hforget : (SW.series s₁ (s₂.rebind θ)).forget =
+        s₁.forget.mkSeries s₂.forget θ := by
+      simp [W.mkSeries]
+    rw [hforget, hwf₁.internal_mkSeries hwf₂ hθ hd]
+    exact Or.inl (Or.inl ⟨hbuf, hni, hno⟩)
+  refine not_conflict_of_confined (SW.SeqBlock.parL SW.SeqBlock.series) ?_ ?_
+  · -- users of a stay in W₁'s block, through the Par context
     rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
-    · obtain ⟨i₀, rfl, hm⟩ := hp
-      refine ⟨i₀, rfl, ?_⟩
-      unfold MintsAt at hm
-      rw [hs_def, SW.leaves_par, atIdx_append] at hm
-      rcases hm with ⟨_, hm⟩ | ⟨hi₀, hm⟩
-      · exact absurd (hd k' (MintsAt.mem_minted hm) hk'₂) not_false
-      · exact ⟨by rwa [hlen] at hi₀, AtIdx.lt_length hm⟩
-    · refine ⟨i, rfl, ?_⟩
-      unfold ConsumesAt at hc
-      rw [hs_def, SW.leaves_par, atIdx_append] at hc
-      rcases hc with ⟨_, hc⟩ | ⟨hi, hc⟩
-      · exfalso
-        have hc₁ : ConsumesAt s₁ _ (Alloc.prod k') := hc
-        exact hd k'
-          (hwf₁.mem_minted_of_prod_mem_buffers k' hc₁.mem_buffers) hk'₂
-      · exact ⟨by rwa [hlen] at hi, AtIdx.lt_length hc⟩
-    · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
-  intro hov
-  refine hov.1 ?_
-  rintro n hn m hm
-  obtain ⟨i, rfl, hge, hlt₂⟩ := huser n hn
-  obtain ⟨i₀, rfl, hm⟩ := hm
-  -- the fresh allocation's producer sits in the first branch
-  have hm₁ : i₀ < s₁.nLeaves := by
-    unfold MintsAt at hm
-    rw [hs_def, SW.leaves_par, atIdx_append] at hm
-    rcases hm with ⟨hi₀, _⟩ | ⟨_, hm⟩
-    · rwa [hlen] at hi₀
-    · exact absurd (hd k hk (MintsAt.mem_minted hm)) not_false
-  -- the seq(2,1) clause orders all of the second branch before the first
-  have hcross : SW.SGen s (s₁.nLeaves + (i - s₁.nLeaves)) i₀ := by
-    rw [hs_def]
-    exact SW.SGen.parCross21 hlt₂ hm₁
-  have e : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
-  rw [e] at hcross
-  exact Relation.TransGen.single (SW.Gen.struct hcross)
+    · simp only [IsProducer] at hp
+      obtain ⟨i₀, rfl, hm⟩ := hp
+      obtain ⟨hit, hmt⟩ := hm.resolve_left rfl hdv hk't
+      exact ⟨i₀, rfl, Nat.zero_le _,
+        (hmt.resolve_left rfl (hd.rebind_right θ) hk'₁).1⟩
+    · rcases consumesAt_par_iff.mp hc with ⟨hit, hct⟩ | ⟨-, hcv⟩
+      · -- consumer inside the series composite: reuse the series confinement
+        obtain ⟨i', heq, hi'⟩ := SWF.users_confined_seriesL h₁ h₂ hθ hd
+          ⟨hbuf, hni, hno⟩ (.inst i) (Or.inr (Or.inl ⟨i, rfl, hct⟩))
+        cases heq
+        exact ⟨i, rfl, Nat.zero_le _, hi'⟩
+      · -- consumer in V: V cannot reference an ID minted in the series arm
+        exact (hdv k' hk't
+          (hwfv.mem_minted_of_prod_mem_buffers k' hcv.mem_buffers)).elim
+    · -- τ: a is not interface anywhere up the context
+      exfalso
+      rcases hif with hin | hout
+      · rcases hin with hin | hin
+        · exact (hwf₁.inputs_isParam _ hin).elim
+        · exact (hwfv.inputs_isParam _ hin).elim
+      · rcases hout with hout | hout
+        · exact hint.2.2 hout
+        · exact hdv k' hk't (hwfv.mem_minted_of_prod_mem_buffers k'
+            (v.forget.outputs_subset_buffers hout))
+  · -- producers of b sit in W₂'s block
+    intro m hm
+    simp only [IsProducer] at hm
+    obtain ⟨j, rfl, hm⟩ := hm
+    obtain ⟨hjt, hmt⟩ := hm.resolve_left rfl hdv hkt
+    obtain ⟨hge, hm₂⟩ := hmt.resolve_right rfl (hd.rebind_right θ)
+      (by simpa using hk)
+    exact ⟨j, rfl, hge, by have := hm₂.lt_nLeaves; omega⟩
 
 /-! ## D14: no concurrent cross-branch reuse -/
 
 /-- **D14 (concurrent Par)**: fresh allocations of opposite branches of a
 concurrent Par always conflict — no order exists between the branches, so
 4.5 keeps them address-disjoint. -/
-theorem SWF.conc_mayOverlap_fresh {s₁ s₂ : SW P K}
+theorem SWF.conc_conflict_fresh {s₁ s₂ : SW P K}
     (hd : MintDisjoint s₁.forget s₂.forget)
     {k₁ k₂ : K} (hk₁ : k₁ ∈ s₁.forget.minted) (hk₂ : k₂ ∈ s₂.forget.minted) :
-    MayOverlap (SW.par .conc s₁ s₂) (.prod k₁) (.prod k₂) := by
+    Conflict (SW.par .conc s₁ s₂) (.prod k₁) (.prod k₂) := by
   set s : SW P K := SW.par .conc s₁ s₂ with hs_def
-  have hlen : s₁.leaves.length = s₁.nLeaves := rfl
-  -- locate the two producers, on opposite sides
   have hmem₁ : k₁ ∈ s.forget.minted := Or.inl hk₁
   have hmem₂ : k₂ ∈ s.forget.minted := Or.inr hk₂
   obtain ⟨i₁, hm₁⟩ := exists_mintsAt hmem₁
   obtain ⟨i₂, hm₂⟩ := exists_mintsAt hmem₂
-  have hside₁ : i₁ < s₁.nLeaves := by
-    unfold MintsAt at hm₁
-    rw [hs_def, SW.leaves_par, atIdx_append] at hm₁
-    rcases hm₁ with ⟨hi, _⟩ | ⟨_, hm⟩
-    · rwa [hlen] at hi
-    · exact absurd (hd k₁ hk₁ (MintsAt.mem_minted hm)) not_false
-  have hside₂ : s₁.nLeaves ≤ i₂ := by
-    unfold MintsAt at hm₂
-    rw [hs_def, SW.leaves_par, atIdx_append] at hm₂
-    rcases hm₂ with ⟨_, hm⟩ | ⟨hi, _⟩
-    · exact absurd (hd k₂ (MintsAt.mem_minted hm) hk₂) not_false
-    · rwa [hlen] at hi
+  have hside₁ : i₁ < s₁.nLeaves := (hm₁.resolve_left rfl hd hk₁).1
+  have hside₂ : s₁.nLeaves ≤ i₂ := (hm₂.resolve_right rfl hd hk₂).1
   have hp₁ : IsProducer s (.prod k₁) (.inst i₁) := ⟨i₁, rfl, hm₁⟩
   have hp₂ : IsProducer s (.prod k₂) (.inst i₂) := ⟨i₂, rfl, hm₂⟩
   constructor
@@ -528,53 +643,37 @@ theorem SW.prec_descend_parL {m : Mode} {s₁ s₂ : SW P K} {i j : ℕ}
     (h : (SW.par m s₁ s₂).Prec (.inst i) (.inst j))
     (hi : i < s₁.nLeaves) (hj : j < s₁.nLeaves) :
     s₁.Prec (.inst i) (.inst j) := by
-  cases m with
-  | seq21 =>
-      rcases SW.prec_descend_succ (fun _ _ hg hi => SW.gen_outof_parL21 hg hi)
-          h i rfl hi with h' | ⟨j', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := id) (fun _ _ h => h) htr
-  | conc =>
-      rcases SW.prec_descend_pred
-          (fun _ _ hg hj => SW.gen_into_parL (by decide) hg hj)
-          h j rfl hj with h' | ⟨i', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := id) (fun _ _ h => h) htr
-  | seq12 =>
-      rcases SW.prec_descend_pred
-          (fun _ _ hg hj => SW.gen_into_parL (by decide) hg hj)
-          h j rfl hj with h' | ⟨i', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := id) (fun _ _ h => h) htr
+  by_cases hm : m = Mode.seq21
+  · subst hm
+    rcases SW.prec_descend_succ (fun _ _ hg hi => SW.gen_outof_parL21 hg hi)
+        h i rfl hi with h' | ⟨j', heq, _, htr⟩
+    · cases h'
+    · cases heq
+      exact SW.transGen_map_prec (f := id) (fun _ _ h => h) htr
+  · rcases SW.prec_descend_pred
+        (fun _ _ hg hj => SW.gen_into_parL hm hg hj)
+        h j rfl hj with h' | ⟨i', heq, _, htr⟩
+    · cases h'
+    · cases heq
+      exact SW.transGen_map_prec (f := id) (fun _ _ h => h) htr
 
 theorem SW.prec_descend_parR {m : Mode} {s₁ s₂ : SW P K} {i j : ℕ}
     (h : (SW.par m s₁ s₂).Prec (.inst i) (.inst j))
     (hi : s₁.nLeaves ≤ i) (hj : s₁.nLeaves ≤ j) :
     s₂.Prec (.inst (i - s₁.nLeaves)) (.inst (j - s₁.nLeaves)) := by
-  cases m with
-  | seq21 =>
-      rcases SW.prec_descend_pred (fun _ _ hg hj => SW.gen_into_parR21 hg hj)
-          h j rfl hj with h' | ⟨i', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := (· - s₁.nLeaves)) (fun _ _ h => h) htr
-  | conc =>
-      rcases SW.prec_descend_succ
-          (fun _ _ hg hi => SW.gen_outof_parR (by decide) hg hi)
-          h i rfl hi with h' | ⟨j', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := (· - s₁.nLeaves)) (fun _ _ h => h) htr
-  | seq12 =>
-      rcases SW.prec_descend_succ
-          (fun _ _ hg hi => SW.gen_outof_parR (by decide) hg hi)
-          h i rfl hi with h' | ⟨j', heq, _, htr⟩
-      · cases h'
-      · cases heq
-        exact SW.transGen_map_prec (f := (· - s₁.nLeaves)) (fun _ _ h => h) htr
+  by_cases hm : m = Mode.seq21
+  · subst hm
+    rcases SW.prec_descend_pred (fun _ _ hg hj => SW.gen_into_parR21 hg hj)
+        h j rfl hj with h' | ⟨i', heq, _, htr⟩
+    · cases h'
+    · cases heq
+      exact SW.transGen_map_prec (f := (· - s₁.nLeaves)) (fun _ _ h => h) htr
+  · rcases SW.prec_descend_succ
+        (fun _ _ hg hi => SW.gen_outof_parR hm hg hi)
+        h i rfl hi with h' | ⟨j', heq, _, htr⟩
+    · cases h'
+    · cases heq
+      exact SW.transGen_map_prec (f := (· - s₁.nLeaves)) (fun _ _ h => h) htr
 
 /-- A designated concurrent Par occurrence inside the SP tree, by its
 instance-index block: the left branch occupies `[lo, mid)`, the right branch
@@ -692,15 +791,15 @@ conflict — neither can be wholly finished before the other's producer,
 because that would require an order across the concurrent Par.  This covers
 allocations injected into a branch by an enclosing Series (the user is a
 consumer) as well as branch-local fresh allocations (the user is the
-producer); `SWF.conc_mayOverlap_fresh` is the root-level fresh/fresh special
+producer); `SWF.conc_conflict_fresh` is the root-level fresh/fresh special
 case. -/
-theorem SWF.conc_mayOverlap_of_cross_users {s : SW P K} (hs : SWF s)
+theorem SWF.conc_conflict_of_cross_users {s : SW P K} (hs : SWF s)
     {lo mid hi : ℕ} (hb : SW.ConcBlock s lo mid hi)
     {a b : Alloc P K} {i j : ℕ}
     (hua : IsUser s a (.inst i)) (hi₁ : lo ≤ i) (hi₂ : i < mid)
     (hub : IsUser s b (.inst j)) (hj₁ : mid ≤ j) (hj₂ : j < hi)
     (hab : a ∈ s.forget.buffers) (hbb : b ∈ s.forget.buffers) :
-    MayOverlap s a b := by
+    Conflict s a b := by
   obtain ⟨ma, hma⟩ := hs.exists_producer hab
   obtain ⟨mb, hmb⟩ := hs.exists_producer hbb
   have hcross := hb.not_cross_prec hi₁ hi₂ hj₁ hj₂

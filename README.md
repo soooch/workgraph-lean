@@ -21,7 +21,7 @@ lake build
 | 1 | `WorkGraph/Syntax.lean` | §1, §2.1–2.3, §3.3 | Allocation IDs, node signatures, node instances, work terms, resolution, `inputs`/`outputs`/`buffers`/`internal`, minted-ID sets, validation; D1 and basic sanity theorems |
 | 2 | `WorkGraph/Composition.lean` | §2.4 | Substitutions, `rebind`, `ThetaFits`, `mkSeries`, the `WF` inductive of legal formations; **D3, D4, D5** |
 | 3 | `WorkGraph/Schedule.lean` | §4.2 (nodes), §4.3 | Schedules (`SW`, Par modes), sentinels σ/τ, the generators of ≺ and its transitive closure; **D7, D8, D9** |
-| 4 | `WorkGraph/Arena.lean` | §4.4, §4.5 | `users`, `mayOverlap`, arena assignments, declaration coherence, arena bounds; **D10, D12** |
+| 4 | `WorkGraph/Arena.lean` | §4.4, §4.5 | `users`, `conflict`, arena assignments, declaration coherence, arena bounds; **D10, D12** |
 | 5 | `WorkGraph/Reuse.lean`, `WorkGraph/Examples.lean` | §5 | **D14** (with D6 en route, and D13 load-bearing in the proof); a fully worked two-node chain |
 
 ## Design decisions (and how they map to the spec)
@@ -74,10 +74,10 @@ lake build
 | D7 no in-place / unique writer | `SWF.mintsAt_unique`, `SWF.exists_producer` (with 3.1 semantic; "no syntax for a second writer" is structural: `prov` re-exposes untouched) |
 | D8 ≺ strict partial order | `SW.prec_irrefl`, `SW.prec_asymm` (transitivity by construction); the linearization embedding is `SW.linRank`/`SW.nodeRank` + `SGen.linRank_lt_linRank`; endpoints: `SW.not_prec_src`, `SW.not_sink_prec`, `SW.src_prec_sink` |
 | D9 dataflow respects ≺ | `SWF.producer_prec_consumer`, `producer_prec_sink` |
-| D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` and `FeasibleFinalization.fresh_input_disjoint` (per-node input/fresh-output byte disjointness — also the conflict content of the spec's allocation-based ping-pong corollary; the two-buffer counting reading is not separately formalized) |
-| D12 interface pinning | `SWF.interface_mayOverlap_iff` (the reduction), `SWF.mayOverlap_interface`, `SWF.mayOverlap_input` (fully pinned), `SWF.interface_not_mayOverlap_of_finished` (an interface output may reuse space wholly finished before its producer), `SWF.mayOverlap_interface_of_user_not_prec` (nothing placed over it from its producer onward); discharged by 4.5: `Assignment.interface_disjoint` |
+| D10 node-local disjointness | `SWF.conflict_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` and `FeasibleFinalization.fresh_input_disjoint` (per-node input/fresh-output byte disjointness — also the conflict content of the spec's allocation-based ping-pong corollary; the two-buffer counting reading is not separately formalized) |
+| D12 interface pinning | `SWF.interface_conflict_iff` (the reduction), `SWF.conflict_interface`, `SWF.conflict_input` (fully pinned), `SWF.interface_not_conflict_of_finishedBefore` (an interface output may reuse space wholly finished before its producer), `SWF.conflict_interface_of_user_not_prec` (nothing placed over it from its producer onward); discharged by 4.5: `Assignment.interface_disjoint` |
 | D13 series order exceeds data dependency | load-bearing inside the D14 proofs (the `seriesCross` step orders dead ends too); the ordering clauses themselves are the `SGen` generators |
-| D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_mayOverlap_internal_fresh`; concurrent Par: `SWF.conc_mayOverlap_of_cross_users` — any two allocations with users on opposite branches of a concurrent Par *anywhere in the schedule* conflict (via `SW.ConcBlock.not_cross_prec`: ≺ never crosses a concurrent Par, even inside a composite), with `SWF.conc_mayOverlap_fresh` the root-level fresh/fresh special case |
+| D14 reuse legality | `SWF.series_not_conflict_internal_fresh`, `SWF.par12_not_conflict_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_conflict_internal_fresh`; concurrent Par: `SWF.conc_conflict_of_cross_users` — any two allocations with users on opposite branches of a concurrent Par *anywhere in the schedule* conflict (via `SW.ConcBlock.not_cross_prec`: ≺ never crosses a concurrent Par, even inside a composite), with `SWF.conc_conflict_fresh` the root-level fresh/fresh special case |
 
 Not formalized (out of scope, faithful to the spec's own scoping): 3.1/3.2
 byte-level execution semantics (the model's ordering side is captured by

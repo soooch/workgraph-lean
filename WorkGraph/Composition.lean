@@ -166,19 +166,22 @@ structure ThetaFits (θ : Subst P K) (w₁ w₂ : W P K) : Prop where
 def W.mkSeries (w₁ w₂ : W P K) (θ : Subst P K) : W P K :=
   .series w₁ (w₂.rebind θ)
 
-/-- 2.1: produced IDs are globally distinct, so two composed terms never
-mint a common ID. -/
+/-- 2.4's formation side condition: the two operands of Series and Par mint
+disjoint produced-ID sets (with per-leaf `MintInj` this yields 2.1's
+global-distinctness invariant — D3). -/
 def MintDisjoint (w₁ w₂ : W P K) : Prop :=
   ∀ k, k ∈ w₁.minted → k ∈ w₂.minted → False
 
-/-- **Well-formed work terms**: exactly the terms arising from the legal
-formations of §1.1/§2.2/§2.4 —
+/-- **Well-formed work terms**: exactly the terms arising from the
+formations of §2.4 —
 
-* a standalone leaf's binding is parameter-valued (`bind = β : InSlots → 𝔸_π`,
-  2.2) and its fresh slots mint distinct IDs (2.1);
+* Instantiate (2.4): a standalone leaf's binding is parameter-valued
+  (`β : InSlots(N) → 𝔸_π`) and its mint is injective on the fresh slots;
 * Series formation applies a fitting substitution to the right arm (2.4);
 * Par introduces no bindings (2.4);
-* across any composition, minted IDs stay globally distinct (2.1). -/
+* formation side condition (2.4): the operands of Series and Par mint
+  disjoint produced-ID sets — global distinctness of produced IDs across a
+  well-formed term is the derived invariant (2.1/D3). -/
 inductive WF : W P K → Prop
   | leaf {l : LeafInst P K} :
       (∀ j, (l.bind j).IsParam) → l.MintInj → WF (.leaf l)

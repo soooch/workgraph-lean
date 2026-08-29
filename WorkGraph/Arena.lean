@@ -1,11 +1,11 @@
 /-
 # Work Graph Model — Stage 4: Conflict, arena assignments, D10/D12
 
-Formalizes §4.4 (users, `mayOverlap`) and §4.5 (arena assignments), and
+Formalizes §4.4 (users, `conflict`) and §4.5 (arena assignments), and
 proves:
 
 * **D10** (node-local disjointness): a node's fresh output always conflicts
-  with each of its inputs (`SWF.mayOverlap_fresh_input`), so 4.5 forces
+  with each of its inputs (`SWF.conflict_fresh_input`), so 4.5 forces
   address disjointness (`Assignment.fresh_input_disjoint`) — a node's fresh
   output can never occupy an input's space.  Also the self-consumption
   impossibility `SWF.bind_ne_fresh` (an instance cannot consume its own
@@ -13,12 +13,12 @@ proves:
 
 * **D12** (interface pinning): τ is a user of every interface allocation and
   nothing follows τ, so for interface `a` the first conjunct of
-  `mayOverlap(a, ·)` always holds (`SWF.interface_mayOverlap_iff`); two
-  interface allocations always conflict (`SWF.mayOverlap_interface`), hence
+  `conflict(a, ·)` always holds (`SWF.interface_conflict_iff`); two
+  interface allocations always conflict (`SWF.conflict_interface`), hence
   are pairwise address-disjoint under any assignment
   (`Assignment.interface_disjoint`) — identical IDs (input passthrough to an
   output) being the one sanctioned coincidence; and an input of `W` conflicts
-  with *every* allocation (`SWF.mayOverlap_input`) — fully pinned.
+  with *every* allocation (`SWF.conflict_input`) — fully pinned.
 
 The producer/user sets are the relational `IsProducer`/`IsUser` of Stage 3 /
 this file; the sentinels are slotless events participating per 4.2/4.4 (σ
@@ -55,14 +55,26 @@ def IsUser (s : SW P K) (a : Alloc P K) (n : PNode) : Prop :=
 theorem IsProducer.isUser {s : SW P K} {a : Alloc P K} {n : PNode}
     (h : IsProducer s a n) : IsUser s a n := Or.inl h
 
-/-- `mayOverlap(a, b)` (4.4): `a` and `b` conflict unless one is fully
-finished — producer and all consumers — before the other's producer starts. -/
-def MayOverlap (s : SW P K) (a b : Alloc P K) : Prop :=
-  ¬ (∀ n, IsUser s a n → ∀ m, IsProducer s b m → s.Prec n m)
-  ∧ ¬ (∀ n, IsUser s b n → ∀ m, IsProducer s a m → s.Prec n m)
+/-- `finishedBefore(a, b)` (4.4): every user of `a` — producer, consumers,
+and τ when `a` is interface — precedes `b`'s producer. -/
+def FinishedBefore (s : SW P K) (a b : Alloc P K) : Prop :=
+  ∀ n, IsUser s a n → ∀ m, IsProducer s b m → s.Prec n m
 
-theorem MayOverlap.symm {s : SW P K} {a b : Alloc P K}
-    (h : MayOverlap s a b) : MayOverlap s b a :=
+/-- `conflict(a, b)` (4.4): neither allocation is fully finished — producer
+and all consumers — before the other's producer starts.  Conflicting
+allocations must be address-disjoint (4.5).
+
+Domain note: spec 4.4 defines `users`/`producer`/`finishedBefore`/`conflict`
+for `a, b ∈ buffers(W)` only.  The Lean predicates are total as a
+representation choice — `IsProducer` totalizes σ as the producer of *every*
+parameter, and an off-term produced ID simply has no producer witness — and
+every main lemma carries the membership hypotheses that scope it back to
+`buffers(W)`. -/
+def Conflict (s : SW P K) (a b : Alloc P K) : Prop :=
+  ¬ FinishedBefore s a b ∧ ¬ FinishedBefore s b a
+
+theorem Conflict.symm {s : SW P K} {a b : Alloc P K}
+    (h : Conflict s a b) : Conflict s b a :=
   ⟨h.2, h.1⟩
 
 /-! ## D10: node-local disjointness -/
@@ -84,10 +96,10 @@ resolving to one of the node's input slots.  First conjunct: the node is a
 user of the input and the producer of the fresh output, and ≺ is strict
 (D8).  Second conjunct: the node is a user of its fresh output, and it
 cannot precede the input's producer, which precedes it (D9). -/
-theorem SWF.mayOverlap_fresh_input {s : SW P K} (hs : SWF s) {i : ℕ}
+theorem SWF.conflict_fresh_input {s : SW P K} (hs : SWF s) {i : ℕ}
     {l : LeafInst P K} (hl : s.leaves[i]? = some l) (j : Fin l.sig.nIn)
     {k : Fin l.sig.nOut} (hfresh : l.sig.prov k = none) :
-    MayOverlap s (l.bind j) (.prod (l.mint k)) := by
+    Conflict s (l.bind j) (.prod (l.mint k)) := by
   have hc : ConsumesAt s i (l.bind j) := ⟨l, hl, ⟨j, rfl⟩⟩
   have hp : IsProducer s (.prod (l.mint k)) (.inst i) :=
     ⟨i, rfl, l, hl, ⟨k, hfresh, rfl⟩⟩
@@ -103,12 +115,11 @@ theorem SWF.mayOverlap_fresh_input {s : SW P K} (hs : SWF s) {i : ℕ}
 /-! ## D12: interface pinning -/
 
 /-- **D12** (reduction): for an interface allocation `a`, τ ∈ users(a) and
-nothing satisfies τ ≺ n, so `mayOverlap(a, b)` reduces to its second
+nothing satisfies τ ≺ n, so `conflict(a, b)` reduces to its second
 conjunct. -/
-theorem SWF.interface_mayOverlap_iff {s : SW P K} (hs : SWF s)
+theorem SWF.interface_conflict_iff {s : SW P K} (hs : SWF s)
     {a b : Alloc P K} (ha : a ∈ Interface s) (hb : b ∈ s.forget.buffers) :
-    MayOverlap s a b ↔
-      ¬ (∀ n, IsUser s b n → ∀ m, IsProducer s a m → s.Prec n m) := by
+    Conflict s a b ↔ ¬ FinishedBefore s b a := by
   constructor
   · exact And.right
   · intro h2
@@ -120,10 +131,10 @@ theorem SWF.interface_mayOverlap_iff {s : SW P K} (hs : SWF s)
 users), hence are pairwise address-disjoint under any assignment — except
 identical IDs (an input of `W` passed through to an output of `W`), the one
 sanctioned coincidence. -/
-theorem SWF.mayOverlap_interface {s : SW P K} (hs : SWF s)
+theorem SWF.conflict_interface {s : SW P K} (hs : SWF s)
     {a b : Alloc P K} (ha : a ∈ Interface s) (hb : b ∈ Interface s) :
-    MayOverlap s a b := by
-  rw [hs.interface_mayOverlap_iff ha (interface_subset_buffers hb)]
+    Conflict s a b := by
+  rw [hs.interface_conflict_iff ha (interface_subset_buffers hb)]
   intro hall
   obtain ⟨m, hm⟩ := hs.exists_producer (interface_subset_buffers ha)
   exact SW.not_sink_prec (hall .sink (Or.inr (Or.inr ⟨rfl, hb⟩)) m hm)
@@ -131,10 +142,10 @@ theorem SWF.mayOverlap_interface {s : SW P K} (hs : SWF s)
 /-- **D12**: an input of `W` (produced by σ; nothing precedes σ) conflicts
 with every allocation occurring in the term — inputs are pinned for the
 entire run (the deliberate memory cost of 4.2). -/
-theorem SWF.mayOverlap_input {s : SW P K} (hs : SWF s) {a b : Alloc P K}
+theorem SWF.conflict_input {s : SW P K} (hs : SWF s) {a b : Alloc P K}
     (ha : a ∈ s.forget.inputs) (hb : b ∈ s.forget.buffers) :
-    MayOverlap s a b := by
-  rw [hs.interface_mayOverlap_iff (Or.inl ha) hb]
+    Conflict s a b := by
+  rw [hs.interface_conflict_iff (Or.inl ha) hb]
   intro hall
   -- a is a parameter (D3), so its producer is σ — and nothing precedes σ
   have hpa : IsProducer s a .src := by
@@ -147,23 +158,23 @@ theorem SWF.mayOverlap_input {s : SW P K} (hs : SWF s) {a b : Alloc P K}
 of an allocation wholly finished — producer and all consumers — before its
 own producer starts: such a pair does not conflict.  (Stated for any
 interface allocation; for an *input* the hypothesis is unsatisfiable, since
-nothing precedes σ — inputs stay fully pinned, `SWF.mayOverlap_input`.) -/
-theorem SWF.interface_not_mayOverlap_of_finished {s : SW P K} (hs : SWF s)
+nothing precedes σ — inputs stay fully pinned, `SWF.conflict_input`.) -/
+theorem SWF.interface_not_conflict_of_finishedBefore {s : SW P K} (hs : SWF s)
     {a b : Alloc P K} (ha : a ∈ Interface s) (hb : b ∈ s.forget.buffers)
-    (hfin : ∀ n, IsUser s b n → ∀ m, IsProducer s a m → s.Prec n m) :
-    ¬ MayOverlap s a b := by
-  rw [hs.interface_mayOverlap_iff ha hb]
+    (hfin : FinishedBefore s b a) :
+    ¬ Conflict s a b := by
+  rw [hs.interface_conflict_iff ha hb]
   exact not_not_intro hfin
 
 /-- **D12** (pinning direction): conversely, nothing may be placed over an
 interface allocation from its producer onward — any single user of `b` that
 fails to precede `a`'s producer forces the conflict (τ ∈ users(a) forbids
 the ordering the other conjunct would need). -/
-theorem SWF.mayOverlap_interface_of_user_not_prec {s : SW P K} (hs : SWF s)
+theorem SWF.conflict_interface_of_user_not_prec {s : SW P K} (hs : SWF s)
     {a b : Alloc P K} {n m : PNode} (ha : a ∈ Interface s)
     (hb : b ∈ s.forget.buffers) (hn : IsUser s b n) (hm : IsProducer s a m)
-    (hnp : ¬ s.Prec n m) : MayOverlap s a b :=
-  (hs.interface_mayOverlap_iff ha hb).mpr fun hall => hnp (hall n hn m hm)
+    (hnp : ¬ s.Prec n m) : Conflict s a b :=
+  (hs.interface_conflict_iff ha hb).mpr fun hall => hnp (hall n hn m hm)
 
 /-! ## §4.5 Arena and packing -/
 
@@ -190,7 +201,7 @@ structure Assignment (s : SW P K) (len alignLog : Alloc P K → ℕ) where
   offset : Alloc P K → ℕ
   aligned : ∀ a ∈ s.forget.buffers, offset a % 2 ^ alignLog a = 0
   disjoint : ∀ a ∈ s.forget.buffers, ∀ b ∈ s.forget.buffers, a ≠ b →
-    MayOverlap s a b →
+    Conflict s a b →
     ∀ x, InSpan (offset a) (len a) x → ¬ InSpan (offset b) (len b) x
 
 /-- Arena bounds (4.5/4.6), as a *conservative feasibility (dominance)
@@ -265,7 +276,7 @@ theorem Assignment.fresh_input_disjoint {s : SW P K}
     rw [hfresh]
   exact A.disjoint _ hbmem _ hkmem
     (hs.bind_ne_fresh hl j hfresh)
-    (hs.mayOverlap_fresh_input hl j hfresh)
+    (hs.conflict_fresh_input hl j hfresh)
 
 /-- **D12, discharged by 4.5**: under any valid assignment, distinct
 interface allocations are pairwise address-disjoint — each is exclusively
@@ -276,7 +287,7 @@ theorem Assignment.interface_disjoint {s : SW P K}
     (hb : b ∈ Interface s) (hab : a ≠ b) :
     ∀ x, InSpan (A.offset a) (len a) x → ¬ InSpan (A.offset b) (len b) x :=
   A.disjoint _ (interface_subset_buffers ha) _ (interface_subset_buffers hb)
-    hab (hs.mayOverlap_interface ha hb)
+    hab (hs.conflict_interface ha hb)
 
 /-! ### D10/D12 through the feasible-finalization bundle -/
 

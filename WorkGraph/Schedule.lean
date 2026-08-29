@@ -403,6 +403,16 @@ theorem src_prec_sink (s : SW P K) : s.Prec .src .sink :=
 
 /-! ### Embedding ≺ of a subterm into ≺ of the composite -/
 
+/-- Generic transitive-closure map: a node relabeling that maps generators
+to generators maps ≺ to ≺.  Every embedding below is defined solely by its
+generator mapping. -/
+theorem prec_map {t t' : SW P K} {f : PNode → PNode}
+    (hf : ∀ a b, t.Gen a b → t'.Gen (f a) (f b)) {a b : PNode}
+    (h : t.Prec a b) : t'.Prec (f a) (f b) := by
+  induction h with
+  | single hg => exact Relation.TransGen.single (hf _ _ hg)
+  | tail _ hg ih => exact Relation.TransGen.tail ih (hf _ _ hg)
+
 theorem gen_embed_seriesL {s₁ s₂ : SW P K} {a b : PNode} (h : Gen s₁ a b) :
     Gen (SW.series s₁ s₂) a b := by
   cases h with
@@ -433,29 +443,21 @@ theorem gen_embed_parR {m : Mode} {s₁ s₂ : SW P K} {a b : PNode}
   | toSink hi => exact .toSink (by rw [nLeaves_par]; omega)
 
 theorem prec_embed_seriesL {s₁ s₂ : SW P K} {a b : PNode} (h : s₁.Prec a b) :
-    (SW.series s₁ s₂).Prec a b := by
-  induction h with
-  | single hg => exact Relation.TransGen.single (gen_embed_seriesL hg)
-  | tail _ hg ih => exact Relation.TransGen.tail ih (gen_embed_seriesL hg)
+    (SW.series s₁ s₂).Prec a b :=
+  prec_map (f := id) (fun _ _ => gen_embed_seriesL) h
 
 theorem prec_embed_seriesR {s₁ s₂ : SW P K} {a b : PNode} (h : s₂.Prec a b) :
-    (SW.series s₁ s₂).Prec (a.shift s₁.nLeaves) (b.shift s₁.nLeaves) := by
-  induction h with
-  | single hg => exact Relation.TransGen.single (gen_embed_seriesR hg)
-  | tail _ hg ih => exact Relation.TransGen.tail ih (gen_embed_seriesR hg)
+    (SW.series s₁ s₂).Prec (a.shift s₁.nLeaves) (b.shift s₁.nLeaves) :=
+  prec_map (fun _ _ => gen_embed_seriesR) h
 
 theorem prec_embed_parL {m : Mode} {s₁ s₂ : SW P K} {a b : PNode}
-    (h : s₁.Prec a b) : (SW.par m s₁ s₂).Prec a b := by
-  induction h with
-  | single hg => exact Relation.TransGen.single (gen_embed_parL hg)
-  | tail _ hg ih => exact Relation.TransGen.tail ih (gen_embed_parL hg)
+    (h : s₁.Prec a b) : (SW.par m s₁ s₂).Prec a b :=
+  prec_map (f := id) (fun _ _ => gen_embed_parL) h
 
 theorem prec_embed_parR {m : Mode} {s₁ s₂ : SW P K} {a b : PNode}
     (h : s₂.Prec a b) :
-    (SW.par m s₁ s₂).Prec (a.shift s₁.nLeaves) (b.shift s₁.nLeaves) := by
-  induction h with
-  | single hg => exact Relation.TransGen.single (gen_embed_parR hg)
-  | tail _ hg ih => exact Relation.TransGen.tail ih (gen_embed_parR hg)
+    (SW.par m s₁ s₂).Prec (a.shift s₁.nLeaves) (b.shift s₁.nLeaves) :=
+  prec_map (fun _ _ => gen_embed_parR) h
 
 /-! ### ≺ only depends on the SP structure, not on bindings -/
 
@@ -496,10 +498,8 @@ theorem gen_rebind {s : SW P K} (θ : Subst P K) {a b : PNode} (h : Gen s a b) :
   | toSink hi => exact .toSink (by rwa [nLeaves_rebind])
 
 theorem prec_rebind {s : SW P K} (θ : Subst P K) {a b : PNode}
-    (h : s.Prec a b) : (s.rebind θ).Prec a b := by
-  induction h with
-  | single hg => exact Relation.TransGen.single (gen_rebind θ hg)
-  | tail _ hg ih => exact Relation.TransGen.tail ih (gen_rebind θ hg)
+    (h : s.Prec a b) : (s.rebind θ).Prec a b :=
+  prec_map (f := id) (fun _ _ => gen_rebind θ) h
 
 end SW
 
@@ -546,6 +546,111 @@ theorem mintsAt_rebind {s : SW P K} {θ : Subst P K} {i : ℕ} {k : K} :
   rw [SW.leaves_rebind, atIdx_map]
   simp only [LeafInst.minted_rebind]
 
+/-! ### Branch-local decomposition API
+
+Composite occurrences decompose through the lemmas below; downstream proofs
+never unfold `AtIdx`/`MintsAt`/`ConsumesAt` directly.  The ℕ-offset index
+arithmetic of the occurrence representation is quarantined here: future
+changes to the occurrence representation go through these lemmas only. -/
+
+@[simp] theorem SW.length_leaves (s : SW P K) : s.leaves.length = s.nLeaves :=
+  rfl
+
+theorem mintsAt_two_arms {s t₁ t₂ : SW P K}
+    (hs : s.leaves = t₁.leaves ++ t₂.leaves) {i : ℕ} {k : K} :
+    MintsAt s i k ↔
+      (i < t₁.nLeaves ∧ MintsAt t₁ i k) ∨
+      (t₁.nLeaves ≤ i ∧ MintsAt t₂ (i - t₁.nLeaves) k) := by
+  unfold MintsAt
+  rw [hs, atIdx_append, SW.length_leaves]
+
+theorem consumesAt_two_arms {s t₁ t₂ : SW P K}
+    (hs : s.leaves = t₁.leaves ++ t₂.leaves) {i : ℕ} {a : Alloc P K} :
+    ConsumesAt s i a ↔
+      (i < t₁.nLeaves ∧ ConsumesAt t₁ i a) ∨
+      (t₁.nLeaves ≤ i ∧ ConsumesAt t₂ (i - t₁.nLeaves) a) := by
+  unfold ConsumesAt
+  rw [hs, atIdx_append, SW.length_leaves]
+
+theorem mintsAt_series_iff {s₁ s₂ : SW P K} {i : ℕ} {k : K} :
+    MintsAt (.series s₁ s₂) i k ↔
+      (i < s₁.nLeaves ∧ MintsAt s₁ i k) ∨
+      (s₁.nLeaves ≤ i ∧ MintsAt s₂ (i - s₁.nLeaves) k) :=
+  mintsAt_two_arms rfl
+
+theorem mintsAt_par_iff {m : Mode} {s₁ s₂ : SW P K} {i : ℕ} {k : K} :
+    MintsAt (.par m s₁ s₂) i k ↔
+      (i < s₁.nLeaves ∧ MintsAt s₁ i k) ∨
+      (s₁.nLeaves ≤ i ∧ MintsAt s₂ (i - s₁.nLeaves) k) :=
+  mintsAt_two_arms rfl
+
+theorem consumesAt_series_iff {s₁ s₂ : SW P K} {i : ℕ} {a : Alloc P K} :
+    ConsumesAt (.series s₁ s₂) i a ↔
+      (i < s₁.nLeaves ∧ ConsumesAt s₁ i a) ∨
+      (s₁.nLeaves ≤ i ∧ ConsumesAt s₂ (i - s₁.nLeaves) a) :=
+  consumesAt_two_arms rfl
+
+theorem consumesAt_par_iff {m : Mode} {s₁ s₂ : SW P K} {i : ℕ} {a : Alloc P K} :
+    ConsumesAt (.par m s₁ s₂) i a ↔
+      (i < s₁.nLeaves ∧ ConsumesAt s₁ i a) ∨
+      (s₁.nLeaves ≤ i ∧ ConsumesAt s₂ (i - s₁.nLeaves) a) :=
+  consumesAt_two_arms rfl
+
+/-- A rebound instance consumes exactly the θ-images of what the original
+consumes. -/
+theorem consumesAt_rebind_iff {s : SW P K} {θ : Subst P K} {i : ℕ}
+    {a : Alloc P K} :
+    ConsumesAt (s.rebind θ) i a ↔ ∃ b, ConsumesAt s i b ∧ θ.apply b = a := by
+  unfold ConsumesAt
+  rw [SW.leaves_rebind, atIdx_map]
+  constructor
+  · rintro ⟨l, hl, hmem⟩
+    rw [LeafInst.inputs_rebind] at hmem
+    obtain ⟨b, hb, hab⟩ := hmem
+    exact ⟨b, ⟨l, hl, hb⟩, hab⟩
+  · rintro ⟨b, ⟨l, hl, hb⟩, hab⟩
+    refine ⟨l, hl, ?_⟩
+    show a ∈ (l.rebind θ).inputs
+    rw [LeafInst.inputs_rebind]
+    exact ⟨b, hb, hab⟩
+
+/-- Mint disjointness transports across rebinding of the right operand
+(rebinding never touches mint names). -/
+theorem MintDisjoint.rebind_right {s₁ s₂ : SW P K} (θ : Subst P K)
+    (hd : MintDisjoint s₁.forget s₂.forget) :
+    MintDisjoint s₁.forget (s₂.rebind θ).forget :=
+  fun k h1 h2 => hd k h1 (by simpa using h2)
+
+/-- Under operand mint disjointness, a composite `MintsAt` resolves to the
+arm whose `minted` set contains the ID (left case). -/
+theorem MintsAt.resolve_left {s t₁ t₂ : SW P K}
+    (hs : s.leaves = t₁.leaves ++ t₂.leaves)
+    (hd : MintDisjoint t₁.forget t₂.forget) {i : ℕ} {k : K}
+    (h : MintsAt s i k) (hk : k ∈ t₁.forget.minted) :
+    i < t₁.nLeaves ∧ MintsAt t₁ i k := by
+  rcases (mintsAt_two_arms hs).mp h with ⟨hi, hm⟩ | ⟨hi, hm⟩
+  · exact ⟨hi, hm⟩
+  · exact (hd k hk hm.mem_minted).elim
+
+/-- Right case of `MintsAt.resolve_left`. -/
+theorem MintsAt.resolve_right {s t₁ t₂ : SW P K}
+    (hs : s.leaves = t₁.leaves ++ t₂.leaves)
+    (hd : MintDisjoint t₁.forget t₂.forget) {i : ℕ} {k : K}
+    (h : MintsAt s i k) (hk : k ∈ t₂.forget.minted) :
+    t₁.nLeaves ≤ i ∧ MintsAt t₂ (i - t₁.nLeaves) k := by
+  rcases (mintsAt_two_arms hs).mp h with ⟨hi, hm⟩ | ⟨hi, hm⟩
+  · exact (hd k hm.mem_minted hk).elim
+  · exact ⟨hi, hm⟩
+
+/-- Under operand mint disjointness, the minting side is *determined* by
+which arm's `minted` set contains the ID. -/
+theorem mintsAt_left_iff_mem_minted {s t₁ t₂ : SW P K}
+    (hs : s.leaves = t₁.leaves ++ t₂.leaves)
+    (hd : MintDisjoint t₁.forget t₂.forget) {i : ℕ} {k : K}
+    (h : MintsAt s i k) :
+    (i < t₁.nLeaves ∧ MintsAt t₁ i k) ↔ k ∈ t₁.forget.minted :=
+  ⟨fun ⟨_, hm⟩ => hm.mem_minted, h.resolve_left hs hd⟩
+
 /-- Every minted ID has a minting instance. -/
 theorem exists_mintsAt {s : SW P K} {k : K} (hk : k ∈ s.forget.minted) :
     ∃ i, MintsAt s i k := by
@@ -580,31 +685,20 @@ theorem SWF.mintsAt_unique {s : SW P K} (hs : SWF s) :
       omega
   | @series s₁ s₂ θ h₁ h₂ hθ hd ih₁ ih₂ =>
       intro i i' k h h'
-      unfold MintsAt at h h'
-      rw [SW.leaves_series, atIdx_append] at h h'
-      have norm : ∀ {j : ℕ},
-          AtIdx (s₂.rebind θ).leaves j (fun l => k ∈ l.minted) ↔ MintsAt s₂ j k := by
-        intro j
-        rw [SW.leaves_rebind, atIdx_map]
-        simp only [LeafInst.minted_rebind]
-        exact Iff.rfl
+      rw [mintsAt_series_iff] at h h'
       rcases h with ⟨hi, h⟩ | ⟨hi, h⟩ <;> rcases h' with ⟨hi', h'⟩ | ⟨hi', h'⟩
       · exact ih₁ h h'
-      · exact (hd k (MintsAt.mem_minted h)
-          (by have := (norm.mp h').mem_minted; simpa using this)).elim
-      · exact (hd k (MintsAt.mem_minted h')
-          (by have := (norm.mp h).mem_minted; simpa using this)).elim
-      · have := ih₂ (norm.mp h) (norm.mp h')
-        have hlen : s₁.leaves.length = s₁.nLeaves := rfl
+      · exact (hd k h.mem_minted (mintsAt_rebind.mp h').mem_minted).elim
+      · exact (hd k h'.mem_minted (mintsAt_rebind.mp h).mem_minted).elim
+      · have := ih₂ (mintsAt_rebind.mp h) (mintsAt_rebind.mp h')
         omega
   | @par m s₁ s₂ h₁ h₂ hd ih₁ ih₂ =>
       intro i i' k h h'
-      unfold MintsAt at h h'
-      rw [SW.leaves_par, atIdx_append] at h h'
+      rw [mintsAt_par_iff] at h h'
       rcases h with ⟨hi, h⟩ | ⟨hi, h⟩ <;> rcases h' with ⟨hi', h'⟩ | ⟨hi', h'⟩
       · exact ih₁ h h'
-      · exact (hd k (MintsAt.mem_minted h) (MintsAt.mem_minted h')).elim
-      · exact (hd k (MintsAt.mem_minted h') (MintsAt.mem_minted h)).elim
+      · exact (hd k h.mem_minted h'.mem_minted).elim
+      · exact (hd k h'.mem_minted h.mem_minted).elim
       · have := ih₂ h h'
         omega
 
@@ -651,15 +745,12 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
       have hwf₁ := h₁.forget_wf
       have hwf₂ := h₂.forget_wf
       have hpd : θ.ParamDom := hθ.paramDom hwf₂
-      have hlen : s₁.leaves.length = s₁.nLeaves := rfl
       have htotal : (SW.series s₁ (s₂.rebind θ)).nLeaves =
           s₁.nLeaves + s₂.nLeaves := by
         rw [SW.nLeaves_series, SW.nLeaves_rebind]
-      unfold ConsumesAt at hc
-      rw [SW.leaves_series, atIdx_append] at hc
-      rcases hc with ⟨hi, hc⟩ | ⟨hi, hc⟩
+      rw [consumesAt_series_iff] at hc
+      rcases hc with ⟨hi, hc₁⟩ | ⟨hi, hc⟩
       · -- consumer in the left arm; its binding is untouched by θ
-        have hc₁ : ConsumesAt s₁ i a := hc
         cases a with
         | param p =>
             simp only [IsProducer] at hp
@@ -669,26 +760,12 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
         | prod k =>
             simp only [IsProducer] at hp
             obtain ⟨i₀, rfl, hm⟩ := hp
-            have hk₁ : k ∈ s₁.forget.minted :=
-              hwf₁.mem_minted_of_prod_mem_buffers k hc₁.mem_buffers
-            have hm₁ : MintsAt s₁ i₀ k := by
-              unfold MintsAt at hm
-              rw [SW.leaves_series, atIdx_append] at hm
-              rcases hm with ⟨hi₀, hm⟩ | ⟨hi₀, hm⟩
-              · exact hm
-              · exfalso
-                rw [SW.leaves_rebind, atIdx_map] at hm
-                simp only [LeafInst.minted_rebind] at hm
-                exact hd k hk₁ (MintsAt.mem_minted hm)
+            have hm₁ := (hm.resolve_left rfl (hd.rebind_right θ)
+              (hwf₁.mem_minted_of_prod_mem_buffers k hc₁.mem_buffers)).2
             exact SW.prec_embed_seriesL (ih₁ hc₁ ⟨i₀, rfl, hm₁⟩)
       · -- consumer in the (rewritten) right arm
-        rw [SW.leaves_rebind, atIdx_map] at hc
-        obtain ⟨l₂, hl₂, ha⟩ := hc
-        rw [LeafInst.inputs_rebind] at ha
-        obtain ⟨b, hb, hab⟩ := ha
-        have hc₂ : ConsumesAt s₂ (i - s₁.nLeaves) b := ⟨l₂, hl₂, hb⟩
+        obtain ⟨b, hc₂, hab⟩ := consumesAt_rebind_iff.mp hc
         have hi₂ : i - s₁.nLeaves < s₂.nLeaves := hc₂.lt_nLeaves
-        rw [hlen] at hi
         cases b with
         | prod k' =>
             -- produced-valued binding: untouched by θ (D4); producer inside s₂
@@ -696,31 +773,22 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
             subst hab
             simp only [IsProducer] at hp
             obtain ⟨i₀, rfl, hm⟩ := hp
-            have hk₂ : k' ∈ s₂.forget.minted :=
-              hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers
-            unfold MintsAt at hm
-            rw [SW.leaves_series, atIdx_append] at hm
-            rcases hm with ⟨hi₀, hm⟩ | ⟨hi₀, hm⟩
-            · exact (hd k' (MintsAt.mem_minted hm) hk₂).elim
-            · rw [SW.leaves_rebind, atIdx_map] at hm
-              simp only [LeafInst.minted_rebind] at hm
-              rw [hlen] at hi₀
-              have hm₂ : MintsAt s₂ (i₀ - s₁.nLeaves) k' := hm
-              -- ih₂ orders producer before consumer inside s₂; ≺ depends only
-              -- on the SP structure, so it transports along rebind, then
-              -- embeds into the composite (shifted by n₁)
-              have hprec := SW.prec_embed_seriesR (s₁ := s₁) (s₂ := s₂.rebind θ)
-                (SW.prec_rebind θ (ih₂ hc₂ ⟨i₀ - s₁.nLeaves, rfl, hm₂⟩))
-              have e₀ : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
-              have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
-              simpa [PNode.shift, e₀, e₁] using hprec
+            obtain ⟨hge₀, hmr⟩ := hm.resolve_right rfl (hd.rebind_right θ)
+              (by simpa using hwf₂.mem_minted_of_prod_mem_buffers k' hc₂.mem_buffers)
+            -- ih₂ orders producer before consumer inside s₂; ≺ depends only
+            -- on the SP structure, so it transports along rebind, then
+            -- embeds into the composite (shifted by n₁)
+            have hprec := SW.prec_embed_seriesR (s₁ := s₁) (s₂ := s₂.rebind θ)
+              (SW.prec_rebind θ
+                (ih₂ hc₂ ⟨i₀ - s₁.nLeaves, rfl, mintsAt_rebind.mp hmr⟩))
+            have e₀ : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
+            have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
+            simpa [PNode.shift, e₀, e₁] using hprec
         | param q =>
             -- parameter binding: rewritten by θ into outputs(W₁)
-            have hqb : Alloc.param q ∈ s₂.forget.buffers := hc₂.mem_buffers
             have hqi : Alloc.param q ∈ s₂.forget.inputs :=
-              hwf₂.param_mem_inputs_of_mem_buffers q hqb
-            have hsome := (hθ.dom_eq _).mpr hqi
-            obtain ⟨c, hcq⟩ := Option.isSome_iff_exists.mp hsome
+              hwf₂.param_mem_inputs_of_mem_buffers q hc₂.mem_buffers
+            obtain ⟨c, hcq⟩ := Option.isSome_iff_exists.mp ((hθ.dom_eq _).mpr hqi)
             rw [θ.apply_of_some hcq] at hab
             subst hab
             have hco : c ∈ s₁.forget.outputs := hθ.codom _ _ hcq
@@ -734,21 +802,12 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
                 -- producer in the left arm; the Series clause gives the order
                 simp only [IsProducer] at hp
                 obtain ⟨i₀, rfl, hm⟩ := hp
-                have hk₁ : k ∈ s₁.forget.minted :=
-                  hwf₁.mem_minted_of_prod_mem_buffers k
-                    (s₁.forget.outputs_subset_buffers hco)
-                have hm₁ : i₀ < s₁.nLeaves ∧ MintsAt s₁ i₀ k := by
-                  unfold MintsAt at hm
-                  rw [SW.leaves_series, atIdx_append] at hm
-                  rcases hm with ⟨hi₀, hm⟩ | ⟨hi₀, hm⟩
-                  · exact ⟨by rwa [hlen] at hi₀, hm⟩
-                  · exfalso
-                    rw [SW.leaves_rebind, atIdx_map] at hm
-                    simp only [LeafInst.minted_rebind] at hm
-                    exact hd k hk₁ (MintsAt.mem_minted hm)
+                obtain ⟨hi₀, -⟩ := hm.resolve_left rfl (hd.rebind_right θ)
+                  (hwf₁.mem_minted_of_prod_mem_buffers k
+                    (s₁.forget.outputs_subset_buffers hco))
                 have hcross : SW.SGen (SW.series s₁ (s₂.rebind θ)) i₀
                     (s₁.nLeaves + (i - s₁.nLeaves)) :=
-                  SW.SGen.seriesCross hm₁.1 (by rwa [SW.nLeaves_rebind])
+                  SW.SGen.seriesCross hi₀ (by rwa [SW.nLeaves_rebind])
                 have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
                 rw [e₁] at hcross
                 exact Relation.TransGen.single (SW.Gen.struct hcross)
@@ -756,32 +815,21 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
       intro i a n hc hp
       have hwf₁ := h₁.forget_wf
       have hwf₂ := h₂.forget_wf
-      have hlen : s₁.leaves.length = s₁.nLeaves := rfl
-      unfold ConsumesAt at hc
-      rw [SW.leaves_par, atIdx_append] at hc
-      rcases hc with ⟨hi, hc⟩ | ⟨hi, hc⟩
-      · have hc₁ : ConsumesAt s₁ i a := hc
-        cases a with
+      rw [consumesAt_par_iff] at hc
+      rcases hc with ⟨hi, hc₁⟩ | ⟨hi, hc₂⟩
+      · cases a with
         | param p =>
             simp only [IsProducer] at hp
             subst hp
             exact Relation.TransGen.single (SW.Gen.fromSrc
-              (by rw [SW.nLeaves_par]; rw [hlen] at hi; omega))
+              (by rw [SW.nLeaves_par]; omega))
         | prod k =>
             simp only [IsProducer] at hp
             obtain ⟨i₀, rfl, hm⟩ := hp
-            have hk₁ : k ∈ s₁.forget.minted :=
-              hwf₁.mem_minted_of_prod_mem_buffers k hc₁.mem_buffers
-            have hm₁ : MintsAt s₁ i₀ k := by
-              unfold MintsAt at hm
-              rw [SW.leaves_par, atIdx_append] at hm
-              rcases hm with ⟨hi₀, hm⟩ | ⟨hi₀, hm⟩
-              · exact hm
-              · exact (hd k hk₁ (MintsAt.mem_minted hm)).elim
+            have hm₁ := (hm.resolve_left rfl hd
+              (hwf₁.mem_minted_of_prod_mem_buffers k hc₁.mem_buffers)).2
             exact SW.prec_embed_parL (ih₁ hc₁ ⟨i₀, rfl, hm₁⟩)
-      · have hc₂ : ConsumesAt s₂ (i - s₁.nLeaves) a := hc
-        rw [hlen] at hi
-        cases a with
+      · cases a with
         | param p =>
             simp only [IsProducer] at hp
             subst hp
@@ -791,16 +839,10 @@ theorem SWF.producer_prec_consumer {s : SW P K} (hs : SWF s) :
         | prod k =>
             simp only [IsProducer] at hp
             obtain ⟨i₀, rfl, hm⟩ := hp
-            have hk₂ : k ∈ s₂.forget.minted :=
-              hwf₂.mem_minted_of_prod_mem_buffers k hc₂.mem_buffers
-            have hm₂ : s₁.nLeaves ≤ i₀ ∧ MintsAt s₂ (i₀ - s₁.nLeaves) k := by
-              unfold MintsAt at hm
-              rw [SW.leaves_par, atIdx_append] at hm
-              rcases hm with ⟨hi₀, hm⟩ | ⟨hi₀, hm⟩
-              · exact (hd k (MintsAt.mem_minted hm) hk₂).elim
-              · exact ⟨by rwa [hlen] at hi₀, hm⟩
+            obtain ⟨hge₀, hm₂⟩ := hm.resolve_right rfl hd
+              (hwf₂.mem_minted_of_prod_mem_buffers k hc₂.mem_buffers)
             have hprec := SW.prec_embed_parR (m := m) (s₁ := s₁)
-              (ih₂ hc₂ ⟨i₀ - s₁.nLeaves, rfl, hm₂.2⟩)
+              (ih₂ hc₂ ⟨i₀ - s₁.nLeaves, rfl, hm₂⟩)
             have e₀ : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
             have e₁ : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
             simpa [PNode.shift, e₀, e₁] using hprec

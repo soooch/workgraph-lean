@@ -7,21 +7,24 @@ are formation-time data (2.4), not fields of terms; `Leaf(N)` and
 
 ## 1. Syntax
 
-**1.1 (Work terms).** Work terms are elaborated objects:
+**1.1 (Work terms).** Work terms are *elaborated* objects:
 
 ```
-W ::= Leaf(N, bind) | Series(W₁, W₂) | Par(W₁, W₂)
+W ::= Leaf(N, bind, mint) | Series(W₁, W₂) | Par(W₁, W₂)
 ```
 
-where N ranges over primitive nodes and `bind : InSlots(N) → 𝔸` is the
-leaf's current binding (2.2). Terms are constructed only by the formations
-of 2.4, which take β (leaf instantiation) and θ (Series) as arguments and do
-not retain them. A node instance is a leaf occurrence — a position in the SP
-tree. Two occurrences are distinct instances even when their leaf
+where N ranges over primitive nodes, `bind : InSlots(N) → 𝔸` is the leaf's
+current binding (2.2), and `mint` names the leaf's fresh allocations — an
+injection from N's ★ slots (1.2) into 𝔸_★. Terms are constructed only by
+the formations of 2.4, which take β (leaf instantiation) and θ (Series) as
+arguments and do not retain them; mint names are chosen at instantiation and
+are never changed by composition. A *node instance* is a leaf occurrence — a position in the
+SP tree. Two occurrences are distinct instances even when their leaf
 descriptions are equal, and `res`, `producer`, and ≺ (4.3) range over
-instances, never over primitive symbols. The term tree is called the SP
-tree. (Intuition, non-normative: a work term corresponds to a two-terminal
-series-parallel DAG, Series composing end-to-end and Par side-by-side.)
+instances, never over primitive symbols. The term tree is called the *SP
+tree*. (Intuition,
+non-normative: a work term corresponds to a two-terminal series-parallel DAG,
+Series composing end-to-end and Par side-by-side.)
 
 **1.2 (Primitive node).** A primitive node N declares:
 
@@ -40,21 +43,26 @@ pointer — no declarations of their own.
 **2.1 (Allocation IDs).** Let `𝔸 = 𝔸_★ ⊎ 𝔸_π`:
 
 - `𝔸_★` (*produced*): each fresh output slot of each node instance introduces
-  a distinct `a ∈ 𝔸_★`. Its *true producer* is the node owning that slot; it
-  carries the slot's declared `len`.
+  `a ∈ 𝔸_★` — the leaf's mint name for that slot (1.1). Distinctness across
+  a well-formed term is an invariant of 2.4's formation conditions
+  (per-leaf injectivity, operand mint disjointness; see D3). Its *true
+  producer* is the node owning that slot; it carries the slot's declared
+  `len`.
 - `𝔸_π` (*parameters*): nominal identifiers, each declared with a fixed
-  `(len, align)`, standing for buffers produced outside the term. A parameter
+  `(len, align)` — align a power of two — standing for buffers produced
+  outside the term. A parameter
   has no producer within any work term — work terms are open terms and their
   parameters are their free variables. Distinct input slots bound to the same
   parameter share that external buffer by name.
 
-**2.2 (Resolution).** Each leaf carries its total binding `bind` (1.1).
-Define `res(node, slot) ∈ 𝔸`:
+**2.2 (Resolution).** Each leaf carries its total binding `bind` (1.1); for
+a term, `bind` denotes the disjoint union of its leaves' bindings, written
+`bind_N` at instance N (likewise `mint_N`). Define `res(node, slot) ∈ 𝔸`:
 
 ```
-res(N, inⱼ)  = bind(N, inⱼ)
-res(N, outₖ) = fresh id of (N, outₖ)      if prov_N(outₖ) = ★
-res(N, outₖ) = bind(N, prov_N(outₖ))      otherwise
+res(N, inⱼ)  = bind_N(inⱼ)
+res(N, outₖ) = mint_N(outₖ)               if prov_N(outₖ) = ★
+res(N, outₖ) = bind_N(prov_N(outₖ))       otherwise
 ```
 
 **2.3 (ID-set functions).** For a work term, define `inputs`, `outputs`,
@@ -80,13 +88,13 @@ internal(W) = buffers(W) − inputs(W) − outputs(W)
 **2.4 (Formation).** Terms are built only by these three operations; a term
 so built is *structurally well-formed*:
 
-- **Instantiate**: given N and `β : InSlots(N) → 𝔸_π`, form `Leaf(N, β)` — a
-  leaf whose binding is β; its ★ slots mint fresh IDs (2.1).
-- **Series**: given structurally well-formed W₁, W₂ and a substitution θ with
-  `dom(θ) = inputs(W₂)` exactly and `range(θ) ⊆ outputs(W₁)` (surjectivity
-  not required), both judged against W₂'s bindings as they stand at
-  formation, form `Series(W₁, W₂′)` where W₂′ is W₂ with every leaf binding
-  rewritten by
+- **Instantiate:** given N, `β : InSlots(N) → 𝔸_π`, and an injective `mint`
+  from N's ★ slots to 𝔸_★, form `Leaf(N, β, mint)`.
+- **Series:** given structurally well-formed W₁, W₂ and a substitution θ
+  with `dom(θ) = inputs(W₂)` exactly — judged against W₂'s bindings as they
+  stand at formation — and `range(θ) ⊆ outputs(W₁)` (surjectivity not
+  required), form `Series(W₁, W₂′)` where W₂′ is W₂ with every
+  leaf binding rewritten by
 
   ```
   bind′(s) = θ(bind(s))   if bind(s) ∈ dom(θ)
@@ -94,18 +102,17 @@ so built is *structurally well-formed*:
   ```
 
   evaluated against pre-formation bindings — simultaneous, applied once,
-  never iterated. W₁'s bindings are untouched. θ is consumed at formation and
-  not retained (a retained θ's type would go stale under enclosing rewrites).
-  The composite contains the *rewritten* W₂.
-- **Par**: form `Par(W₁, W₂)` from structurally well-formed W₁, W₂; no
+  never iterated. W₁'s bindings are untouched. θ is consumed at formation
+  and not retained (a retained θ's type would go stale under enclosing
+  rewrites). The composite contains the *rewritten* W₂.
+- **Par:** form `Par(W₁, W₂)` from structurally well-formed W₁, W₂; no
   bindings are introduced or changed. Branches share interface inputs by
   naming the same parameter.
 
-Formation operands are *closed*: structural well-formedness is a property of
-whole terms as formed. 2.1's global distinctness surfaces at formation as a
-side condition: the two operands of Series and Par mint disjoint produced-ID
-sets. A subterm of a
-closed term is merely *scoped*: enclosing formations may have rewritten its
+Formation operands are **standalone**: structural well-formedness is a
+property of whole terms as formed. Formation side condition: the two
+operands of Series and Par mint disjoint produced-ID sets. A subterm of a
+standalone term is merely **scoped**: enclosing formations may have rewritten its
 bindings to produced IDs, and scoped subterms are not formation operands —
 the rewritten arm W₂′ exists only inside its composite.
 
@@ -126,13 +133,13 @@ structurally well-formed (2.4) and length-valid.
 ## 4. Finalization
 
 **4.1 (Type boundary).** `finalize : W_wf → G`, defined only on well-formed
-terms. A finalized graph G is **not** a work term and cannot be composed.
-All scheduling and allocation decisions occur exactly once, at finalization,
-over the full SP tree.
+terms. A finalized graph G is **not** a work term and cannot be composed. All
+scheduling and allocation decisions occur exactly once, at finalization, over
+the full SP tree.
 
 **4.2 (Sentinels).** Define `inputs(G) := inputs(W)` and
-`outputs(G) := outputs(W)`. Extend the node instances of W with two sentinel
-*events* σ and τ, carrying no slots and no declarations:
+`outputs(G) := outputs(W)`. Extend the node instances of W with two
+*sentinel events* σ and τ, carrying no slots and no declarations:
 
 - `producer(p) := σ` for every parameter p occurring in W (contents
   caller-provided before execution; σ performs no computation);
@@ -163,7 +170,8 @@ instance's start–finish span, and an instance may start only after every
 ≺-predecessor has finished. ≺ is the only ordering primitive; no notion of
 time is defined beyond the spans it constrains.
 
-**4.4 (Conflict).** For allocation a, let
+**4.4 (Conflict).** `users`, `producer`, `finishedBefore`, and `conflict`
+are defined for allocations in `buffers(W)` only. For `a ∈ buffers(W)`, let
 
 ```
 users(a) = { producer(a) }
@@ -172,11 +180,12 @@ users(a) = { producer(a) }
 ```
 
 with `producer(p) = σ` for parameters (4.2) and the minting instance for
-produced IDs (2.1). Define:
+produced IDs (1.1, 2.1). For `a, b ∈ buffers(W)`, define:
 
 ```
-mayOverlap(a, b) ⟺ ¬(∀u ∈ users(a). u ≺ producer(b))
-                 ∧ ¬(∀u ∈ users(b). u ≺ producer(a))
+finishedBefore(a, b) ⟺ ∀u ∈ users(a). u ≺ producer(b)
+
+conflict(a, b) ⟺ ¬finishedBefore(a, b) ∧ ¬finishedBefore(b, a)
 ```
 
 i.e., a and b conflict unless one is fully finished — producer and all
@@ -192,7 +201,7 @@ parameter's declaration enters directly). An *assignment* maps each
 ```
 offset(a) ≡ 0 (mod align(a))
 
-a ≠ b ∧ mayOverlap(a, b)
+a ≠ b ∧ conflict(a, b)
     ⟹ [offset(a), offset(a)+len(a)) ∩ [offset(b), offset(b)+len(b)) = ∅
 ```
 
@@ -215,8 +224,8 @@ is deliberately open (§6).
 
 Runtime performs no memory logic: buffer address = base + offset.
 
-**4.7 (ABI).** Caller allocates the arena, writes `inputs(G)` at their
-offsets, executes, reads `outputs(G)` at their offsets.
+**4.7 (ABI).** Caller allocates the arena, writes `inputs(G)` at their offsets,
+executes, reads `outputs(G)` at their offsets.
 
 ## 5. Derived Properties and Remarks
 
@@ -227,45 +236,51 @@ reads a forwarded input is unmodeled and irrelevant; neither `prov_N` nor β
 need be injective — several slots naming one allocation resolve to the same
 ID, inert by D11.
 
-**D2 (Resolution is a lookup).** In the elaborated model, `res` (2.2) is
-non-recursive: one `bind` lookup, plus one intra-node `prov` hop for
-outputs. Under an eager, fully materialized representation of bindings,
-Series formation rewrites each binding at most once per enclosing Series —
-O(nesting depth) per slot — and lookup is O(1); lazier representations trade
-lookup cost against formation cost. The semantics (2.4) fixes only values,
-not representation.
+**D2 (Resolution is non-recursive).** `res` (2.2) is a single application of
+`bind`, plus one intra-node `prov` application for outputs — no chase.
+Series formation applies one simultaneous rewrite to the right arm, so any
+binding is rewritten at most once per enclosing Series. These are counts of
+definition applications and rewrite events; the model assigns no costs, so
+asymptotic claims would require a machine model and a representation — 2.4
+fixes values only.
 
 **D3 (Composition closure).** By induction over the formations of 2.4:
 `bind` is total at every stage, so `res` is; `inputs(W₂′) ⊆ outputs(W₁)` in
-`Series(W₁, W₂′)` holds by construction; and the inputs of any closed term
-(2.4) are exactly its free parameters: `inputs(W) ⊆ 𝔸_π` — indeed every
-parameter-valued binding anywhere in W names a member of `inputs(W)`, so the
-parameters occurring in W are exactly `inputs(W)`. Series rewrites every
-such binding of W₂ through θ, possibly to a *forwarded parameter* of W₁;
-parameter bindings may thus survive formation, but only as free variables of
-the composite, since a parameter in `outputs(W₁)` lies in `inputs(W₁)`
-(induction: a leaf exposes a parameter only by passthrough of a slot bound
-to it; Series and Par preserve the containment). Composition is capture-free
-substitution on open terms — parameters behave precisely as free variables.
-Consequently finalization closes the term: σ's producer assignment (4.2)
-covers every parameter occurring in W — exactly `inputs(W)` — and with 2.1,
-every allocation occurring in G has exactly one producer.
+`Series(W₁, W₂′)` holds by construction; and the inputs of any standalone term
+(2.4) are exactly its free parameters:
+`inputs(W) ⊆ 𝔸_π` — indeed every parameter-valued binding anywhere in W
+names a member of `inputs(W)`, so the parameters occurring in W are exactly
+`inputs(W)`. Series rewrites every such binding of W₂ through θ, possibly to
+a *forwarded parameter* of W₁; parameter bindings may thus survive
+formation, but only as free variables of the composite, since a parameter in
+`outputs(W₁)` lies in `inputs(W₁)` (induction: a leaf exposes a parameter
+only by passthrough of a slot bound to it; Series and Par preserve the
+containment). Composition is capture-free substitution on open terms —
+parameters behave precisely as free variables. Consequently finalization
+closes the term: σ's producer assignment (4.2) covers every parameter
+occurring in W — exactly `inputs(W)` — and, with mint distinctness plus
+D4's containment (every produced ID in `buffers(W)` is minted inside W;
+cited forward), every allocation occurring in G has exactly one producer.
+The same formation induction yields mint distinctness itself: per-leaf
+injectivity and operand disjointness (2.4) give distinct (instance, ★ slot)
+pairs distinct IDs across any well-formed term — 2.1's invariant.
 
 **D4 (Externality).** At every Series formation, `dom(θ) ⊆ 𝔸_π`: the right
-arm is closed at formation (2.4), so `dom(θ)` is its inputs, ⊆ 𝔸_π by D3.
+arm is standalone at formation (2.4), so `dom(θ)` is its inputs, ⊆ 𝔸_π by D3.
 Hence a binding, once produced-valued, is never rewritten. Consequently, for
 any subterm V of any work term: every ID in `buffers(V)` not minted by a node
-of V lies in `inputs(V)`. Induction: when V is formed it is closed, and its
-non-local IDs are exactly its parameters, which D3 places at its input
+of V lies in `inputs(V)`. Induction: when V is formed it is standalone, and
+its non-local IDs are exactly its parameters, which D3 places at its input
 boundary; each enclosing substitution rewrites by ID value, so a boundary
 occurrence and an interior occurrence of one ID map to the same image —
 whether that image is a parameter or an ID minted in the enclosing left arm —
 preserving the containment through every rewrite.
 
-**D5 (Unfolded internals).** From 2.3, D3, and D4 (both inclusions of the
-Series equality use D4, e.g. `internal(W₁) ∩ outputs(W₂) = ∅`: such an a
+**D5 (Unfolded internals).** From 2.3, D3, D4, and the operands' mint
+disjointness (2.4) — both inclusions of the Series equality use D4 plus
+disjointness, e.g. `internal(W₁) ∩ outputs(W₂) = ∅`: such an a
 would be non-local in `buffers(W₂)`, hence in `inputs(W₂) ⊆ outputs(W₁)`,
-contradicting internality):
+contradicting internality:
 
 ```
 internal(Series(W₁, W₂)) = internal(W₁) ∪ internal(W₂)
@@ -273,16 +288,23 @@ internal(Series(W₁, W₂)) = internal(W₁) ∪ internal(W₂)
 internal(Par(W₁, W₂))    = internal(W₁) ∪ internal(W₂)
 ```
 
-**D6 (Locality of deadness).** `a ∈ internal(W)` ⟹ `users(a) ⊆ nodes(W)`.
-Inward: producer(a) ∈ W, since by D4 a non-locally-minted or parameter ID in
-`buffers(W)` would lie in `inputs(W)`, contradicting internality. Outward:
-absence from `outputs(W)` leaves no forwarding path out, and sharing by
-parameter name is excluded since a ∉ 𝔸_π. Conversely, interface members are
+**D6 (Locality of deadness).** For a finalized term C and any subterm
+occurrence W of C: `a ∈ internal(W)` ⟹ `users_C(a) ⊆ nodes(W)`, users
+computed in C (4.4). Inward: producer(a) ∈ W, since by D4 a
+non-locally-minted or parameter ID in `buffers(W)` would lie in `inputs(W)`,
+contradicting internality; in particular a ∉ 𝔸_π, excluding sharing by
+parameter name. Outward, by induction on the path from W to C's root, using
+D4 and mint disjointness (2.4) at each level: an ID minted in W reaches a
+slot outside W only through enclosing Series substitutions, whose ranges are
+`outputs` sets at their levels; each crossing forces membership in the
+crossed boundary's `outputs`, and the descent bottoms out at `outputs(W)` —
+which excludes a. τ consumes only `inputs(C) ∪ outputs(C)`, from which a is
+excluded by the same descent. Conversely, interface members are
 exposed: nothing in W's structure certifies a member of
-`inputs(W) ∪ outputs(W)` dead. Under an explicit open-world premise — that a
-compatible consumer signature may always be declared, which 1.2 permits but
-does not assert — an enclosing countercontext witnessing an outside user is
-moreover constructible: a Par sibling naming the same parameter for
+`inputs(W) ∪ outputs(W)` dead. Under an explicit *open-world premise* — that
+a compatible consumer signature may always be declared, which 1.2 permits
+but does not assert — an enclosing countercontext witnessing an outside user
+is moreover constructible: a Par sibling naming the same parameter for
 `a ∈ inputs(W)`, a downstream Series consumer of matching `len` for
 `a ∈ outputs(W)`. So `internal(W)` is sound unconditionally, and maximal
 under the open-world premise.
@@ -301,12 +323,14 @@ closure, which is therefore irreflexive.
 
 **D9 (Dataflow respects ≺).** For every allocation a and every
 c ∈ users(a) ∖ {producer(a)}: `producer(a) ≺ c`. Induction over the
-formations, using D4's observation that produced-valued bindings are final:
-a slot's value is either its leaf parameter — whose producer after
-finalization is σ, and σ ≺ c — or was set produced-valued by exactly one
-Series formation, whose range lies in the left arm's outputs while c sits in
-the right arm, so the Series clause gives producer ≺ c; passthrough creates
-no new consumers. Case c = τ: producer(a) ≺ τ by the (n, τ) generators when
+formations, using D4's observation that produced-valued bindings are final: a
+slot's final value is either parameter-valued — possibly renamed through
+parameter-forwarding substitutions (D3), every parameter's producer after
+finalization being σ, with σ ≺ c — or became produced-valued at exactly one
+Series formation and was thereafter unchanged; at that formation the
+range lies in the left arm's outputs while c sits in the
+right arm, so the Series clause gives producer ≺ c; passthrough creates no
+new consumers. Case c = τ: producer(a) ≺ τ by the (n, τ) generators when
 producer(a) ∈ W, and σ ≺ τ through any node of W (nonempty by 1.1) when
 producer(a) = σ. This lemma is also what makes the execution contract (4.3)
 correct: for produced allocations, access containment puts the producer's
@@ -316,16 +340,17 @@ follows; for parameters, caller initialization precedes execution entirely
 boundary.
 
 **D10 (Node-local disjointness).** Let b be a fresh output of N and a resolve
-to an input slot of N. First conjunct of `mayOverlap(a, b)`: N ∈ users(a),
-producer(b) = N, and ≺ is strict (D8), so N ⊀ N. Second conjunct: N ∈
-users(b), and N ≺ producer(a) is impossible since producer(a) ≺ N (D9) and ≺
-is irreflexive. Hence `mayOverlap(a, b)` and 4.5 forces address disjointness —
-a node's fresh output can never occupy an input's space. Corollary (positive
-lengths): every node's input and fresh-output byte ranges are disjoint.
+to an input slot of N. `¬finishedBefore(a, b)`: N ∈ users(a),
+producer(b) = N, and ≺ is strict (D8), so N ⊀ N. `¬finishedBefore(b, a)`:
+N ∈ users(b), and N ≺ producer(a) is impossible: if producer(a) ≠ N then
+producer(a) ≺ N (D9) and irreflexivity refutes it; if producer(a) = N it is
+N ≺ N, refuted directly. Hence `conflict(a, b)` and 4.5 forces address
+disjointness — a node's fresh output can never occupy an input's space.
+Corollary: every node's input and fresh-output byte ranges are disjoint.
 Whenever some node consumes an internal allocation and freshly produces an
-internal allocation (distinct by 2.1), both of positive length, the two
-conflict — so at least two interior buffers are simultaneously placed: the
-ping-pong lower bound, over interior storage only; pinned interface
+internal allocation (distinct by 2.1), the two conflict; when both have
+positive length, at least two interior buffers are simultaneously placed:
+the ping-pong *lower bound*, over interior storage only; pinned interface
 allocations (D12) sit on top of it. The hypothesis is on allocations, not
 edges: passthrough lets consecutive interior edges carry a single allocation
 (A → B, B forwarding a → C), in which case no such pair need exist.
@@ -336,25 +361,22 @@ equal lengths and compatible alignments.)
 bytes of declared `(len, align)` — behavior cannot depend on addresses or on
 whether slots alias, since neither is among the function's arguments.
 Unobservable in particular are: whether two input slots resolve to the same
-allocation (immutability, 3.1, makes aliased slots bit-identical
-throughout); whether an input's provenance is a parameter or an upstream
-produced ID; and whether it arrived directly or through passthrough chains.
-(The syntactic fact that node declarations never mention 𝔸 makes 3.2
-satisfiable by ordinary kernels; 3.2 itself is what delivers
-unobservability.) Corollary (substitution): rebinding preserves the
-interior's input–output function — for any byte environment, evaluating the
-rewritten W₂ with each rebound slot reading θ(p)'s bytes equals evaluating
-standalone W₂ with p bound to those same bytes. (Outputs differ when the
-supplied bytes differ; what is invariant is the function, not its value.)
-This is what makes Series formation sound without inspecting W₂ —
-finalization (4.2) touches no bindings at all. Lowering-level exceptions
+allocation (immutability, 3.1, makes aliased slots bit-identical throughout);
+whether an input's provenance is a parameter or an upstream produced ID; and
+whether it arrived directly or through passthrough chains. (The syntactic
+fact that node declarations never mention 𝔸 makes 3.2 satisfiable by
+ordinary kernels; 3.2 itself is what delivers unobservability.) A composite-level substitution lemma — "rebinding
+preserves the interior's input–output function" — would require an
+evaluation semantics for work terms, which the model deliberately does not
+define (§6); §3 licenses only the node-local statement above. Finalization
+(4.2) touches no bindings at all. Lowering-level exceptions
 (descriptor-binding limits etc.) are per-target legality checks, remedied by
 explicit copy nodes.
 
 **D12 (Interface pinning).** For every interface allocation a, τ ∈ users(a)
-(4.4), and nothing satisfies τ ≺ n (4.3, D8). So for interface a and any b:
-`∀u ∈ users(a). u ≺ producer(b)` fails at u = τ, hence `mayOverlap(a, b)`
-reduces to `¬(∀u ∈ users(b). u ≺ producer(a))`. Consequences: two interface
+(4.4), and nothing satisfies τ ≺ n (4.3, D8). So for interface a and any
+`b ∈ buffers(W)`: `finishedBefore(a, b)` fails at u = τ, hence
+`conflict(a, b)` reduces to `¬finishedBefore(b, a)`. Consequences: two interface
 allocations always conflict (each has τ among users), hence are pairwise
 address-disjoint — except identical IDs from passthrough of an input of W to
 an output of W, the one sanctioned coincidence; an input of W (producer σ,
@@ -376,9 +398,9 @@ strict superset of the order D9 accounts for. This is load-bearing: D14's
 guarantee that all of `internal(W₁)` is reusable in W₂ requires every user in
 W₁ — dead ends included — to precede W₂.
 
-**D14 (Reuse legality).** Unfolding 4.4/4.5: a ≠ b may share addresses iff
-`¬mayOverlap(a, b)`, i.e. one is wholly finished before the other's producer
-starts — which access containment (4.3) makes semantically sufficient, not
+**D14 (Reuse legality).** Unfolding 4.4/4.5: `a ≠ b` in `buffers(W)` may
+share addresses iff `¬conflict(a, b)`, i.e. one is finishedBefore the
+other's producer starts — which access containment (4.3) makes semantically sufficient, not
 merely model-internal. Consequences: concurrent Par branches admit no
 cross-branch reuse (no order exists between them); shared read-only inputs
 are counted once, and consumers of a shared allocation need no mutual
@@ -386,20 +408,32 @@ ordering (reads commute by 3.1 + 3.2); for `Series(W₁, W₂)`, every
 `a ∈ internal(W₁)` has `users(a) ⊆ nodes(W₁)` (D6) all ≺ every node of W₂
 (4.3), so all of `internal(W₁)` is reusable by every fresh allocation in W₂;
 and for `Par` with mode `seq(i,j)`, likewise every `a ∈ internal(Wᵢ)` — the
-earlier branch — is reusable by every fresh allocation in Wⱼ.
+*earlier* branch — is reusable by every fresh allocation in Wⱼ.
 
 **D15 (Packing is DSA).** Minimizing arena size under 4.5 is dynamic storage
 allocation on the conflict graph — NP-hard, and — under the open-world
 premise of D6, tick signatures being freely declarable — the hardness is
-realizable within the model: any DSA instance `{(sᵢ, eᵢ, lenᵢ)}` with WLOG sᵢ < eᵢ
-(subdivide ticks; hardness is preserved) is realized by a pure Series chain
+realizable within the model: any DSA instance `{(sᵢ, eᵢ, lenᵢ)}` — WLOG sᵢ < eᵢ with no
+endpoint coincidences across items (subdivide and double ticks,
+sᵢ ↦ 2sᵢ, eᵢ ↦ 2eᵢ − 1; hardness is preserved), matching the
+*closed-interval* conflict the realization induces — is realized by a pure
+Series chain
 of tick nodes (empty slot sets permitted by 1.2, so source and terminal ticks
 need no dummies) where tick sᵢ mints allocation i fresh, ticks strictly
 between sᵢ and eᵢ forward it by passthrough, and tick eᵢ consumes without
 forwarding. Lower bound: max weight of a clique in the conflict graph; the
 gap to it is fragmentation. S and the assignment are coupled through
-`mayOverlap`; practical decomposition: choose S to minimize the clique bound,
+`conflict`; practical decomposition: choose S to minimize the clique bound,
 then pack (first-fit over a linearization as baseline).
+
+**D16 (Alignment soundness).** Every alignment in the model is a power of
+two (1.2 for slots, 2.1 for parameters), so divisibility totally orders them
+and max = lcm: `align(a)` divides the arena alignment for every a. A base
+address satisfying the arena alignment therefore satisfies every allocation —
+`base + offset(a) ≡ 0 (mod align(a))` by 4.5's offset congruence — which is
+what makes 4.5's maxima sufficient for the ABI (4.7). Without the
+power-of-two constraint on parameters, max ≠ lcm and the emitted alignment
+can under-align a parameter.
 
 ## 6. Deliberately Excluded / Deferred / Rejected
 
@@ -418,6 +452,11 @@ then pack (first-fit over a linearization as baseline).
   rejected: totality of θ encodes the SP routing discipline that all data
   enters a series composite through its first stage; the identity-plumbing
   cost of routing a parameter past W₁ is the accepted, memory-harmless price.
+- **Evaluation semantics** — deliberately undefined: 3.1/3.2 constrain
+  primitive behavior only; the model specifies ordering, aliasing, and
+  memory legality, not computation. Composite-level semantic statements
+  (e.g. a substitution lemma for rebinding) live in this layer and are out
+  of scope.
 - **Selection policy** — open: the objective over feasible finalizations
   (pure arena-size minimization vs. a latency/memory Pareto) and tie-breaking
   among optima; the only remaining free choice before the finalization

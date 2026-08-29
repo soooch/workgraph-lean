@@ -12,8 +12,8 @@ computes as the spec says:
 * it has a well-formed schedule with A ≺ B (`prec_chain`, and again via the
   generic D9 theorem in `prec_chain'`);
 * D10 concretely: A's fresh output conflicts with A's input
-  (`mayOverlap_chain`), and D12 concretely: the input is pinned against the
-  output (`mayOverlap_interface_chain`).
+  (`conflict_chain`), and D12 concretely: the input is pinned against the
+  output (`conflict_interface_chain`).
 
 Parameters are named by strings, produced IDs by naturals.  (`abbrev` keeps
 the slot types reducible so that `Fin` literals elaborate.)
@@ -151,12 +151,12 @@ theorem prec_chain' : sChain.Prec (.inst 0) (.inst 1) := by
 
 /-- **D10 concretely**: A's fresh output `t₀` conflicts with A's input `x` —
 under any valid assignment their byte intervals are disjoint. -/
-theorem mayOverlap_chain : MayOverlap sChain (.param "x") (.prod 0) :=
-  swf_chain.mayOverlap_fresh_input (i := 0) (l := leafA) rfl 0 (k := 0) rfl
+theorem conflict_chain : Conflict sChain (.param "x") (.prod 0) :=
+  swf_chain.conflict_fresh_input (i := 0) (l := leafA) rfl 0 (k := 0) rfl
 
 /-- D12 concretely: the chain's input is pinned against its output. -/
-theorem mayOverlap_interface_chain : MayOverlap sChain (.param "x") (.prod 1) :=
-  swf_chain.mayOverlap_input ⟨0, rfl⟩ (Or.inr (Or.inr ⟨(0 : Fin 1), rfl⟩))
+theorem conflict_interface_chain : Conflict sChain (.param "x") (.prod 1) :=
+  swf_chain.conflict_input ⟨0, rfl⟩ (Or.inr (Or.inr ⟨(0 : Fin 1), rfl⟩))
 
 /-! ### Produced-ID distinctness at formation (1.1/2.1/2.4)
 
