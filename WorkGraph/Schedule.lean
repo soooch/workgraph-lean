@@ -170,6 +170,21 @@ inductive SWF : SW P K → Prop
       SWF s₁ → SWF s₂ → MintDisjoint s₁.forget s₂.forget →
       SWF (.par m s₁ s₂)
 
+/-- Inversion for `SWF` at a Series node: the right arm is a rewritten
+well-formed schedule under a fitting substitution.  (Lets a holder of a
+composite `SWF` apply the arm-hypothesis theorems below.) -/
+theorem SWF.series_elim {s₁ s₂' : SW P K} (h : SWF (.series s₁ s₂')) :
+    SWF s₁ ∧ ∃ (s₂ : SW P K) (θ : Subst P K), s₂' = s₂.rebind θ ∧ SWF s₂ ∧
+      ThetaFits θ s₁.forget s₂.forget ∧ MintDisjoint s₁.forget s₂.forget := by
+  cases h with
+  | series h₁ h₂ hθ hd => exact ⟨h₁, _, _, rfl, h₂, hθ, hd⟩
+
+/-- Inversion for `SWF` at a Par node. -/
+theorem SWF.par_elim {m : Mode} {s₁ s₂ : SW P K} (h : SWF (.par m s₁ s₂)) :
+    SWF s₁ ∧ SWF s₂ ∧ MintDisjoint s₁.forget s₂.forget := by
+  cases h with
+  | par h₁ h₂ hd => exact ⟨h₁, h₂, hd⟩
+
 /-- A well-formed schedule schedules a well-formed term. -/
 theorem SWF.forget_wf {s : SW P K} (h : SWF s) : WF s.forget := by
   induction h with
@@ -195,6 +210,87 @@ theorem WF.exists_schedule {w : W P K} (h : WF w) :
       obtain ⟨s₁, rfl, hs₁⟩ := ih₁
       obtain ⟨s₂, rfl, hs₂⟩ := ih₂
       exact ⟨.par .conc s₁ s₂, rfl, .par hs₁ hs₂ hd⟩
+
+/-- Rebinding is surjective on schedules of the right shape: a schedule
+whose erasure is a rewritten term is itself a rewritten schedule (modes are
+untouched by rebinding). -/
+theorem SW.exists_rebind_preimage {θ : Subst P K} :
+    ∀ {s : SW P K} {w : W P K}, s.forget = w.rebind θ →
+      ∃ t : SW P K, t.forget = w ∧ t.rebind θ = s := by
+  intro s
+  induction s with
+  | leaf l =>
+      intro w h
+      cases w with
+      | leaf l₀ =>
+          simp only [SW.forget, W.rebind] at h
+          injection h with h'
+          exact ⟨.leaf l₀, rfl, by rw [SW.rebind, h']⟩
+      | series w₁ w₂ => simp [W.rebind, SW.forget] at h
+      | par w₁ w₂ => simp [W.rebind, SW.forget] at h
+  | series s₁ s₂ ih₁ ih₂ =>
+      intro w h
+      cases w with
+      | leaf l₀ => simp [W.rebind, SW.forget] at h
+      | series w₁ w₂ =>
+          simp only [SW.forget_series, W.rebind] at h
+          injection h with h₁ h₂
+          obtain ⟨t₁, ht₁, ht₁'⟩ := ih₁ h₁
+          obtain ⟨t₂, ht₂, ht₂'⟩ := ih₂ h₂
+          exact ⟨.series t₁ t₂, by simp [ht₁, ht₂],
+            by rw [SW.rebind, ht₁', ht₂']⟩
+      | par w₁ w₂ => simp [W.rebind, SW.forget] at h
+  | par m s₁ s₂ ih₁ ih₂ =>
+      intro w h
+      cases w with
+      | leaf l₀ => simp [W.rebind, SW.forget] at h
+      | series w₁ w₂ => simp [W.rebind, SW.forget] at h
+      | par w₁ w₂ =>
+          simp only [SW.forget_par, W.rebind] at h
+          injection h with h₁ h₂
+          obtain ⟨t₁, ht₁, ht₁'⟩ := ih₁ h₁
+          obtain ⟨t₂, ht₂, ht₂'⟩ := ih₂ h₂
+          exact ⟨.par m t₁ t₂, by simp [ht₁, ht₂],
+            by rw [SW.rebind, ht₁', ht₂']⟩
+
+/-- **4.3, ∀-form**: *every* mode assignment of a well-formed term is a
+well-formed schedule — "a schedule S assigns each Par node in W a mode",
+with no further condition.  (Shape-paired induction with `WF` inversion;
+the Series case pulls the schedule of the rewritten arm back through
+`SW.exists_rebind_preimage`.) -/
+theorem WF.swf_of_forget {w : W P K} (h : WF w) :
+    ∀ s : SW P K, s.forget = w → SWF s := by
+  induction h with
+  | @leaf l hβ hm =>
+      intro s hs
+      cases s with
+      | leaf l' =>
+          injection hs with h'
+          subst h'
+          exact SWF.leaf hβ hm
+      | series s₁ s₂ => simp at hs
+      | par m s₁ s₂ => simp at hs
+  | @series w₁ w₂ θ h₁ h₂ hθ hd ih₁ ih₂ =>
+      intro s hs
+      cases s with
+      | leaf l' => simp [W.mkSeries] at hs
+      | par m s₁ s₂ => simp [W.mkSeries] at hs
+      | series s₁ s₂ =>
+          simp only [SW.forget_series, W.mkSeries] at hs
+          injection hs with hs₁ hs₂
+          obtain ⟨t₂, ht₂, rfl⟩ := SW.exists_rebind_preimage hs₂
+          exact SWF.series (ih₁ s₁ hs₁) (ih₂ t₂ ht₂)
+            (by rw [hs₁, ht₂]; exact hθ) (by rw [hs₁, ht₂]; exact hd)
+  | @par w₁ w₂ h₁ h₂ hd ih₁ ih₂ =>
+      intro s hs
+      cases s with
+      | leaf l' => simp at hs
+      | series s₁ s₂ => simp at hs
+      | par m s₁ s₂ =>
+          simp only [SW.forget_par] at hs
+          injection hs with hs₁ hs₂
+          exact SWF.par (ih₁ s₁ hs₁) (ih₂ s₂ hs₂)
+            (by rw [hs₁, hs₂]; exact hd)
 
 /-! ## §4.2/§4.3 Nodes of the finalized graph and the generators of ≺ -/
 
@@ -259,6 +355,36 @@ abbrev Prec (s : SW P K) : PNode → PNode → Prop := Relation.TransGen (Gen s)
 
 /-! ### D8: ≺ embeds in the mode-ordered linearization -/
 
+/-- Rank in an appended pair of blocks: the left block (ranked by `r₁`)
+precedes the right block (ranked by `r₂`, shifted past `n₁`).  Shared by
+the Series, concurrent-Par, and `seq(1,2)`-Par arms of `linRank`; only
+`seq(2,1)`'s reversed construction stays separate. -/
+def appendRank (n₁ : ℕ) (r₁ r₂ : ℕ → ℕ) (i : ℕ) : ℕ :=
+  if i < n₁ then r₁ i else n₁ + r₂ (i - n₁)
+
+theorem appendRank_lt {n₁ n₂ : ℕ} {r₁ r₂ : ℕ → ℕ}
+    (h₁ : ∀ i, r₁ i < n₁) (h₂ : ∀ i, r₂ i < n₂) (i : ℕ) :
+    appendRank n₁ r₁ r₂ i < n₁ + n₂ := by
+  unfold appendRank
+  split
+  · have := h₁ i; omega
+  · have := h₂ (i - n₁); omega
+
+theorem appendRank_left {n₁ : ℕ} {r₁ r₂ : ℕ → ℕ} {i : ℕ} (hi : i < n₁) :
+    appendRank n₁ r₁ r₂ i = r₁ i := if_pos hi
+
+theorem appendRank_right {n₁ : ℕ} {r₁ r₂ : ℕ → ℕ} {i : ℕ} :
+    appendRank n₁ r₁ r₂ (n₁ + i) = n₁ + r₂ i := by
+  unfold appendRank
+  rw [if_neg (by omega), Nat.add_sub_cancel_left]
+
+theorem appendRank_cross {n₁ : ℕ} {r₁ r₂ : ℕ → ℕ} {i j : ℕ}
+    (h₁ : ∀ i, r₁ i < n₁) (hi : i < n₁) :
+    appendRank n₁ r₁ r₂ i < appendRank n₁ r₁ r₂ (n₁ + j) := by
+  rw [appendRank_left hi, appendRank_right]
+  have := h₁ i
+  omega
+
 /-- Position of instance `i` in the left-to-right linearization of the SP
 tree *taken with mode order*: `seq(2,1)` reverses its branches (D8).
 (A concurrent Par is linearized arbitrarily left-then-right; its generators
@@ -266,18 +392,12 @@ are empty, so any consistent placement works.)  Total in `i` for
 convenience; only values at `i < nLeaves` are meaningful. -/
 def linRank : SW P K → ℕ → ℕ
   | .leaf _, _ => 0
-  | .series s₁ s₂, i =>
-      if i < s₁.nLeaves then s₁.linRank i
-      else s₁.nLeaves + s₂.linRank (i - s₁.nLeaves)
+  | .series s₁ s₂, i => appendRank s₁.nLeaves s₁.linRank s₂.linRank i
   | .par .seq21 s₁ s₂, i =>
       if i < s₁.nLeaves then s₂.nLeaves + s₁.linRank i
       else s₂.linRank (i - s₁.nLeaves)
-  | .par .conc s₁ s₂, i =>
-      if i < s₁.nLeaves then s₁.linRank i
-      else s₁.nLeaves + s₂.linRank (i - s₁.nLeaves)
-  | .par .seq12 s₁ s₂, i =>
-      if i < s₁.nLeaves then s₁.linRank i
-      else s₁.nLeaves + s₂.linRank (i - s₁.nLeaves)
+  | .par .conc s₁ s₂, i => appendRank s₁.nLeaves s₁.linRank s₂.linRank i
+  | .par .seq12 s₁ s₂, i => appendRank s₁.nLeaves s₁.linRank s₂.linRank i
 
 theorem linRank_lt (s : SW P K) (i : ℕ) : s.linRank i < s.nLeaves := by
   induction s generalizing i with
@@ -285,18 +405,21 @@ theorem linRank_lt (s : SW P K) (i : ℕ) : s.linRank i < s.nLeaves := by
   | series s₁ s₂ ih₁ ih₂ =>
       rw [nLeaves_series]
       simp only [linRank]
-      split
-      · have := ih₁ i; omega
-      · have := ih₂ (i - s₁.nLeaves); omega
+      exact appendRank_lt ih₁ ih₂ i
   | par m s₁ s₂ ih₁ ih₂ =>
       rw [nLeaves_par]
-      cases m <;> simp only [linRank] <;> split
-      · have := ih₁ i; omega
-      · have := ih₂ (i - s₁.nLeaves); omega
-      · have := ih₁ i; omega
-      · have := ih₂ (i - s₁.nLeaves); omega
-      · have := ih₁ i; omega
-      · have := ih₂ (i - s₁.nLeaves); omega
+      cases m with
+      | conc =>
+          simp only [linRank]
+          exact appendRank_lt ih₁ ih₂ i
+      | seq12 =>
+          simp only [linRank]
+          exact appendRank_lt ih₁ ih₂ i
+      | seq21 =>
+          simp only [linRank]
+          split
+          · have := ih₁ i; omega
+          · have := ih₂ (i - s₁.nLeaves); omega
 
 /-- Every structural generator pair respects the linearization (D8). -/
 theorem SGen.linRank_lt_linRank {s : SW P K} {i j : ℕ} (h : SGen s i j) :
@@ -304,30 +427,19 @@ theorem SGen.linRank_lt_linRank {s : SW P K} {i j : ℕ} (h : SGen s i j) :
   induction h with
   | @seriesCross s₁ s₂ i j h₁ h₂ =>
       simp only [linRank]
-      rw [if_pos h₁, if_neg (by omega)]
-      have hr := linRank_lt s₁ i
-      have he : s₁.nLeaves + j - s₁.nLeaves = j := by omega
-      rw [he]
-      omega
+      exact appendRank_cross (linRank_lt s₁) h₁
   | @seriesLeft s₁ s₂ i j h ih =>
       obtain ⟨hi, hj⟩ := h.bounds
       simp only [linRank]
-      rw [if_pos hi, if_pos hj]
+      rw [appendRank_left hi, appendRank_left hj]
       exact ih
   | @seriesRight s₁ s₂ i j h ih =>
       simp only [linRank]
-      rw [if_neg (by omega), if_neg (by omega)]
-      have e₁ : s₁.nLeaves + i - s₁.nLeaves = i := by omega
-      have e₂ : s₁.nLeaves + j - s₁.nLeaves = j := by omega
-      rw [e₁, e₂]
+      rw [appendRank_right, appendRank_right]
       omega
   | @parCross12 s₁ s₂ i j h₁ h₂ =>
       simp only [linRank]
-      rw [if_pos h₁, if_neg (by omega)]
-      have hr := linRank_lt s₁ i
-      have he : s₁.nLeaves + j - s₁.nLeaves = j := by omega
-      rw [he]
-      omega
+      exact appendRank_cross (linRank_lt s₁) h₁
   | @parCross21 s₁ s₂ i j h₁ h₂ =>
       simp only [linRank]
       rw [if_neg (by omega), if_pos h₂]
@@ -337,12 +449,36 @@ theorem SGen.linRank_lt_linRank {s : SW P K} {i j : ℕ} (h : SGen s i j) :
       omega
   | @parLeft m s₁ s₂ i j h ih =>
       obtain ⟨hi, hj⟩ := h.bounds
-      cases m <;> simp only [linRank] <;> rw [if_pos hi, if_pos hj] <;> omega
+      cases m with
+      | conc =>
+          simp only [linRank]
+          rw [appendRank_left hi, appendRank_left hj]
+          exact ih
+      | seq12 =>
+          simp only [linRank]
+          rw [appendRank_left hi, appendRank_left hj]
+          exact ih
+      | seq21 =>
+          simp only [linRank]
+          rw [if_pos hi, if_pos hj]
+          omega
   | @parRight m s₁ s₂ i j h ih =>
-      have e₁ : s₁.nLeaves + i - s₁.nLeaves = i := by omega
-      have e₂ : s₁.nLeaves + j - s₁.nLeaves = j := by omega
-      cases m <;> simp only [linRank] <;>
-        rw [if_neg (by omega), if_neg (by omega), e₁, e₂] <;> omega
+      cases m with
+      | conc =>
+          simp only [linRank]
+          rw [appendRank_right, appendRank_right]
+          omega
+      | seq12 =>
+          simp only [linRank]
+          rw [appendRank_right, appendRank_right]
+          omega
+      | seq21 =>
+          simp only [linRank]
+          rw [if_neg (by omega), if_neg (by omega)]
+          have e₁ : s₁.nLeaves + i - s₁.nLeaves = i := by omega
+          have e₂ : s₁.nLeaves + j - s₁.nLeaves = j := by omega
+          rw [e₁, e₂]
+          omega
 
 /-- Rank in the full linearization: σ first, instances by `linRank`, τ last
 (D8: "with σ prepended and τ appended"). -/

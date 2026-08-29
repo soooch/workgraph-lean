@@ -146,15 +146,6 @@ theorem mem_inputs {a : Alloc P K} : a ∈ l.inputs ↔ ∃ j, l.bind j = a :=
 theorem mem_outputs {a : Alloc P K} : a ∈ l.outputs ↔ ∃ k, l.resOut k = a :=
   Set.mem_range
 
-/-- Every output is a minted ID or a re-exposed input: a leaf's outputs are
-contained in its minted IDs together with its inputs. -/
-theorem outputs_subset :
-    l.outputs ⊆ (Alloc.prod '' l.minted) ∪ l.inputs := by
-  rintro a ⟨k, rfl⟩
-  rcases l.resOut_cases k with ⟨h, hres⟩ | ⟨j, _, hres⟩
-  · exact Or.inl ⟨l.mint k, ⟨k, h, rfl⟩, hres.symm⟩
-  · exact Or.inr ⟨j, hres.symm⟩
-
 end LeafInst
 
 /-! ## §1.1 Work terms -/
