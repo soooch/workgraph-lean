@@ -187,4 +187,61 @@ theorem swf_two_instances (m : Mode) :
     (SWF.leaf (fun _ => trivial) (fun i i' _ _ _ => finOne i i'))
     mintDisjoint_AB
 
+/-! ### A concrete feasible finalization (non-vacuity of the arena layer)
+
+The chain's finalization: `x@0, t₀@16, t₁@32` — all three allocations
+pairwise conflict (D10/D12), lengths and alignments are the canonical ones
+computed from the declarations, and the computed arena is 48 bytes,
+4-aligned.  This witnesses every structure of the arena layer, so a
+polarity error in `Assignment.disjoint` (or friends) would be caught
+here. -/
+
+/-- `buffers(chain)` is exactly `{x, t₀, t₁}` (as a computed list). -/
+theorem allocList_chain :
+    sChain.allocList = [.param "x", .prod 0, .prod 0, .prod 1] := by
+  decide
+
+theorem mem_buffers_chain {a : Alloc String ℕ}
+    (ha : a ∈ sChain.forget.buffers) :
+    a = .param "x" ∨ a = .prod 0 ∨ a = .prod 1 := by
+  rw [← SW.mem_allocList_iff, allocList_chain] at ha
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
+  rcases ha with h | h | h | h
+  exacts [Or.inl h, Or.inr (Or.inl h), Or.inr (Or.inl h), Or.inr (Or.inr h)]
+
+/-- Offsets: parameters at 0, produced ID `k` at `16 + 16k`. -/
+def offsets : Alloc String ℕ → ℕ
+  | .param _ => 0
+  | .prod k => 16 + 16 * k
+
+/-- The chain's concrete assignment. -/
+def chainAssignment : Assignment pd sChain where
+  offset := offsets
+  aligned := by
+    intro a ha
+    rcases mem_buffers_chain ha with rfl | rfl | rfl <;> decide
+  disjoint := by
+    intro a ha b hb hne hconf x hx hy
+    rcases mem_buffers_chain ha with rfl | rfl | rfl <;>
+      rcases mem_buffers_chain hb with rfl | rfl | rfl <;>
+      first
+        | exact absurd rfl hne
+        | (simp only [InSpan, offsets,
+            show sChain.allocLen pd (.param "x") = 16 from rfl,
+            show sChain.allocLen pd (.prod 0) = 16 from by decide,
+            show sChain.allocLen pd (.prod 1) = 16 from by decide] at hx hy
+           omega)
+
+/-- **The chain's feasible finalization**: a concrete inhabitant of the
+whole arena bundle. -/
+def chainFinalization : FeasibleFinalization pd sChain where
+  finalizable := ⟨swf_chain, lenValid_chain⟩
+  assignment := chainAssignment
+
+/-- The computed arena: 48 bytes … -/
+example : chainAssignment.arenaSize = 48 := by decide
+
+/-- … at alignment 2² = 4. -/
+example : sChain.arenaAlignLog pd = 2 := by decide
+
 end WorkGraph.Examples

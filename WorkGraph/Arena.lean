@@ -176,12 +176,229 @@ theorem SWF.conflict_interface_of_user_not_prec {s : SW P K} (hs : SWF s)
     (hnp : ¬ s.Prec n m) : Conflict s a b :=
   (hs.interface_conflict_iff ha hb).mpr fun hall => hnp (hall n hn m hm)
 
-/-! ## §4.5 Arena and packing -/
+/-! ## §4.5 Arena and packing
+
+Canonical arena functions: allocation lengths and effective alignments are
+*computed* from the term and the parameter declarations (folds over the leaf
+list), the `Assignment` consumes them directly, and arena size/alignment are
+computed maxima over the assignment (seeded 0 / exponent 0 = alignment 1,
+per 4.5's `max({0} ∪ …)` / `max({1} ∪ …)`) — non-canonical metadata is
+unrepresentable.
+
+Note on alignments: they are stored as log₂ exponents throughout
+(`alignLog`), so 1.2/2.1's "align is a power of two" is structural — it is
+the encoding, which is what makes max = lcm and D16 go through. -/
+
+section FoldMax
+
+variable {α : Type*}
+
+theorem le_foldr_max (f : α → ℕ) {L : List α} {x : α} (hx : x ∈ L) :
+    f x ≤ L.foldr (fun y acc => max (f y) acc) 0 := by
+  induction L with
+  | nil => cases hx
+  | cons y L ih =>
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact le_max_left _ _
+      · exact (ih hx).trans (le_max_right _ _)
+
+theorem foldr_max_le {f : α → ℕ} {L : List α} {c : ℕ}
+    (h : ∀ x ∈ L, f x ≤ c) : L.foldr (fun y acc => max (f y) acc) 0 ≤ c := by
+  induction L with
+  | nil => exact Nat.zero_le c
+  | cons y L ih =>
+      exact max_le (h y (by simp)) (ih fun x hx => h x (by simp [hx]))
+
+end FoldMax
+
+variable [DecidableEq P] [DecidableEq K]
+
+/-! ### Canonical lengths -/
+
+/-- Length contribution of one leaf to a produced ID: the declared length of
+a fresh slot minting `k`, if any (0 otherwise).  Under `SWF`, at most one
+slot in the whole term contributes — `SWF.allocLen_prod`. -/
+def LeafInst.mintLen (l : LeafInst P K) (k : K) : ℕ :=
+  (List.finRange l.sig.nOut).foldr
+    (fun i acc =>
+      max (if l.sig.prov i = none ∧ l.mint i = k then l.sig.freshLen i else 0)
+        acc) 0
+
+def SW.prodLen (s : SW P K) (k : K) : ℕ :=
+  s.leaves.foldr (fun l acc => max (l.mintLen k) acc) 0
+
+/-- **Canonical allocation length** (2.1): a parameter's declared length; a
+produced ID's minting-slot declared length. -/
+def SW.allocLen (pd : ParamDecl P) (s : SW P K) : Alloc P K → ℕ
+  | .param p => pd.len p
+  | .prod k => s.prodLen k
+
+omit [DecidableEq P] in
+@[simp] theorem SW.allocLen_param (pd : ParamDecl P) (s : SW P K) (p : P) :
+    s.allocLen pd (.param p) = pd.len p := rfl
+
+omit [DecidableEq P] [DecidableEq K] in
+/-- Every leaf of a well-formed schedule has injective minting. -/
+theorem SWF.mintInj_of_mem {s : SW P K} (hs : SWF s) :
+    ∀ {l : LeafInst P K}, l ∈ s.leaves → l.MintInj := by
+  induction hs with
+  | @leaf l₀ hβ hm =>
+      intro l hl
+      rw [SW.leaves_leaf, List.mem_singleton] at hl
+      subst hl
+      exact hm
+  | @series s₁ s₂ θ h₁ h₂ hθ hd ih₁ ih₂ =>
+      intro l hl
+      rw [SW.leaves_series, List.mem_append] at hl
+      rcases hl with hl | hl
+      · exact ih₁ hl
+      · rw [SW.leaves_rebind, List.mem_map] at hl
+        obtain ⟨l₀, hl₀, rfl⟩ := hl
+        have h : l₀.MintInj := ih₂ hl₀
+        exact h
+  | @par m s₁ s₂ h₁ h₂ hd ih₁ ih₂ =>
+      intro l hl
+      rw [SW.leaves_par, List.mem_append] at hl
+      rcases hl with hl | hl
+      · exact ih₁ hl
+      · exact ih₂ hl
+
+omit [DecidableEq P] in
+/-- **Canonical length agrees with the minting slot** (2.1): under `SWF`,
+`allocLen` of a produced ID is exactly the `freshLen` declared where it is
+minted — D7 uniqueness makes the fold's single contribution the max. -/
+theorem SWF.allocLen_prod {pd : ParamDecl P} {s : SW P K} (hs : SWF s)
+    {i : ℕ} {l : LeafInst P K} (hl : s.leaves[i]? = some l)
+    {k : Fin l.sig.nOut} (hfresh : l.sig.prov k = none) :
+    s.allocLen pd (.prod (l.mint k)) = l.sig.freshLen k := by
+  have hmem : l ∈ s.leaves := List.mem_of_getElem? hl
+  apply le_antisymm
+  · apply foldr_max_le
+    intro l' hl'
+    apply foldr_max_le
+    intro i' hi'
+    split
+    · rename_i hcond
+      -- l' mints (l.mint k) at fresh slot i': by D7 uniqueness, l' = l and,
+      -- by per-leaf injectivity, i' = k
+      obtain ⟨i₁, hi₁⟩ := List.mem_iff_getElem?.mp hl'
+      have hm₁ : MintsAt s i₁ (l.mint k) := ⟨l', hi₁, ⟨i', hcond.1, hcond.2⟩⟩
+      have hm₀ : MintsAt s i (l.mint k) := ⟨l, hl, ⟨k, hfresh, rfl⟩⟩
+      have : i₁ = i := hs.mintsAt_unique hm₁ hm₀
+      subst this
+      have : l' = l := by
+        rw [hl] at hi₁
+        exact (Option.some.inj hi₁).symm
+      subst this
+      have : i' = k := hs.mintInj_of_mem hmem i' k hcond.1 hfresh hcond.2
+      subst this
+      exact le_refl _
+    · exact Nat.zero_le _
+  · refine le_trans ?_ (le_foldr_max (fun l' => l'.mintLen (l.mint k)) hmem)
+    refine le_trans ?_
+      (le_foldr_max
+        (fun i' => if l.sig.prov i' = none ∧ l.mint i' = l.mint k then
+          l.sig.freshLen i' else 0)
+        (List.mem_finRange k))
+    rw [if_pos ⟨hfresh, rfl⟩]
+
+/-! ### Canonical effective alignment -/
+
+/-- Alignment-exponent contribution of one leaf to an allocation: the max
+declared alignment over its input slots binding `a` and fresh slots minting
+`a` (passthrough slots carry no declarations — 1.2). -/
+def LeafInst.alignContrib (l : LeafInst P K) (a : Alloc P K) : ℕ :=
+  max
+    ((List.finRange l.sig.nIn).foldr
+      (fun j acc => max (if l.bind j = a then l.sig.inAlignLog j else 0) acc)
+      0)
+    ((List.finRange l.sig.nOut).foldr
+      (fun i acc =>
+        max (if l.sig.prov i = none ∧ Alloc.prod (l.mint i) = a then
+          l.sig.freshAlignLog i else 0) acc) 0)
+
+/-- **Effective alignment** (4.5), exponent form: exactly the max of the
+declared alignments of every slot resolving to the allocation and, for a
+parameter, its own declared alignment ("σ carries no slots, so the
+parameter's declaration enters directly"). -/
+def SW.effAlignLog (pd : ParamDecl P) (s : SW P K) (a : Alloc P K) : ℕ :=
+  max
+    (match a with
+      | .param p => pd.alignLog p
+      | .prod _ => 0)
+    (s.leaves.foldr (fun l acc => max (l.alignContrib a) acc) 0)
+
+/-- The effective alignment dominates every input-slot declaration resolving
+to the allocation. -/
+theorem SW.inAlignLog_le_effAlignLog (pd : ParamDecl P) {s : SW P K}
+    {l : LeafInst P K} (hl : l ∈ s.leaves) (j : Fin l.sig.nIn) :
+    l.sig.inAlignLog j ≤ s.effAlignLog pd (l.bind j) := by
+  refine le_trans (le_trans ?_ (le_max_left _ _))
+    (le_trans (le_foldr_max (fun l' => l'.alignContrib (l.bind j)) hl)
+      (le_max_right _ _))
+  refine le_trans ?_
+    (le_foldr_max
+      (fun j' => if l.bind j' = l.bind j then l.sig.inAlignLog j' else 0)
+      (List.mem_finRange j))
+  rw [if_pos rfl]
+
+/-- The effective alignment dominates every fresh-slot declaration minting
+the allocation. -/
+theorem SW.freshAlignLog_le_effAlignLog (pd : ParamDecl P) {s : SW P K}
+    {l : LeafInst P K} (hl : l ∈ s.leaves) {k : Fin l.sig.nOut}
+    (hfresh : l.sig.prov k = none) :
+    l.sig.freshAlignLog k ≤ s.effAlignLog pd (.prod (l.mint k)) := by
+  refine le_trans (le_trans ?_ (le_max_right _ _))
+    (le_trans
+      (le_foldr_max (fun l' => l'.alignContrib (.prod (l.mint k))) hl)
+      (le_max_right _ _))
+  refine le_trans ?_
+    (le_foldr_max
+      (fun i' => if l.sig.prov i' = none ∧ Alloc.prod (l.mint i') = .prod (l.mint k) then
+        l.sig.freshAlignLog i' else 0)
+      (List.mem_finRange k))
+  rw [if_pos ⟨hfresh, rfl⟩]
+
+/-- The effective alignment of a parameter dominates its own declaration. -/
+theorem SW.paramAlignLog_le_effAlignLog (pd : ParamDecl P) (s : SW P K)
+    (p : P) : pd.alignLog p ≤ s.effAlignLog pd (.param p) :=
+  le_max_left _ _
+
+/-! ### Enumerating `buffers(W)` -/
+
+/-- All resolved slots of one instance. -/
+def LeafInst.allocs (l : LeafInst P K) : List (Alloc P K) :=
+  (List.finRange l.sig.nIn).map l.bind ++
+    (List.finRange l.sig.nOut).map l.resOut
+
+/-- `buffers(W)` (2.3), as a list. -/
+def SW.allocList (s : SW P K) : List (Alloc P K) :=
+  s.leaves.flatMap LeafInst.allocs
+
+omit [DecidableEq P] [DecidableEq K] in
+theorem SW.mem_allocList_iff {s : SW P K} {a : Alloc P K} :
+    a ∈ s.allocList ↔ a ∈ s.forget.buffers := by
+  rw [SW.allocList, List.mem_flatMap, W.mem_buffers_iff_leaves]
+  simp only [SW.leaves_forget]
+  constructor
+  · rintro ⟨l, hl, ha⟩
+    refine ⟨l, hl, ?_⟩
+    rw [LeafInst.allocs, List.mem_append, List.mem_map, List.mem_map] at ha
+    rcases ha with ⟨j, -, rfl⟩ | ⟨kk, -, rfl⟩
+    · exact Or.inl ⟨j, rfl⟩
+    · exact Or.inr ⟨kk, rfl⟩
+  · rintro ⟨l, hl, ha⟩
+    refine ⟨l, hl, ?_⟩
+    rw [LeafInst.allocs, List.mem_append, List.mem_map, List.mem_map]
+    rcases ha with ⟨j, rfl⟩ | ⟨kk, rfl⟩
+    · exact Or.inl ⟨j, List.mem_finRange j, rfl⟩
+    · exact Or.inr ⟨kk, List.mem_finRange kk, rfl⟩
+
+/-! ### The domain of `finalize`, assignments, and the emitted arena -/
 
 /-- The domain of `finalize` (4.1): `W_wf` — structurally well-formed (2.4,
 here a well-formed schedule of one) and length-valid (3.3) relative to the
-parameter declarations.  Wherever an assignment is characterized as
-belonging to a valid finalization, this is the term-side hypothesis. -/
+parameter declarations. -/
 structure Finalizable (pd : ParamDecl P) (s : SW P K) : Prop where
   swf : SWF s
   lenValid : s.forget.LenValid pd
@@ -189,89 +406,90 @@ structure Finalizable (pd : ParamDecl P) (s : SW P K) : Prop where
 /-- Byte interval `[offset, offset + len)` membership. -/
 def InSpan (offset len x : ℕ) : Prop := offset ≤ x ∧ x < offset + len
 
-/-- An arena *assignment* (4.5), relative to length and effective-alignment
-functions on allocation IDs (alignment stored as log₂, 1.2): every
-allocation of the term gets an aligned offset, and conflicting allocations
-get disjoint byte intervals.  (An empty-length allocation occupies no bytes,
-so its interval is disjoint from everything, matching `∩ = ∅` in 4.5.)
-By itself this structure does not certify a finalization — that is the
-bundled `FeasibleFinalization` below, which ties it to a `Finalizable`
-term. -/
-structure Assignment (s : SW P K) (len alignLog : Alloc P K → ℕ) where
+/-- An arena *assignment* (4.5) over the canonical lengths and effective
+alignments: every allocation of the term gets an aligned offset, and
+conflicting allocations get disjoint byte intervals.  (An empty-length
+allocation occupies no bytes, so its interval is disjoint from everything,
+matching `∩ = ∅` in 4.5.) -/
+structure Assignment (pd : ParamDecl P) (s : SW P K) where
   offset : Alloc P K → ℕ
-  aligned : ∀ a ∈ s.forget.buffers, offset a % 2 ^ alignLog a = 0
+  aligned : ∀ a ∈ s.forget.buffers, offset a % 2 ^ s.effAlignLog pd a = 0
   disjoint : ∀ a ∈ s.forget.buffers, ∀ b ∈ s.forget.buffers, a ≠ b →
     Conflict s a b →
-    ∀ x, InSpan (offset a) (len a) x → ¬ InSpan (offset b) (len b) x
+    ∀ x, InSpan (offset a) (s.allocLen pd a) x →
+      ¬ InSpan (offset b) (s.allocLen pd b) x
 
-/-- Arena bounds (4.5/4.6), as a *conservative feasibility (dominance)
-relation*: any `size ≥ max (offset + len)` and `alignLog ≥ max alignLog`
-qualify.  §4.5's exact arena size and alignment are the least elements of
-this relation (`max({0} ∪ …)` / `max({1} ∪ …)`); the emitted artifact takes
-those, and minimizing over assignments is the open objective of §6. -/
-structure ArenaBounds (s : SW P K) (len alignLog : Alloc P K → ℕ)
-    (A : Assignment s len alignLog) (size arenaAlignLog : ℕ) : Prop where
-  size_bound : ∀ a ∈ s.forget.buffers, A.offset a + len a ≤ size
-  align_bound : ∀ a ∈ s.forget.buffers, alignLog a ≤ arenaAlignLog
+/-- Arena size (4.5): `max({0} ∪ { offset(a) + len(a) })` — computed. -/
+def Assignment.arenaSize {pd : ParamDecl P} {s : SW P K}
+    (A : Assignment pd s) : ℕ :=
+  s.allocList.foldr (fun a acc => max (A.offset a + s.allocLen pd a) acc) 0
 
-/-- Effective lengths/alignments cohere with the declarations (4.5, 3.3):
-the length of an allocation is its declared length (parameter declaration or
-minting slot declaration), and the alignment function *dominates* the
-declared alignment of every declaration-carrying slot resolving to the
-allocation — input slots and fresh slots — and, for a parameter, its own
-declared alignment, which enters directly: the sentinels carry no slots and
-no declarations (4.2), and passthrough slots carry none either.  Like
-`ArenaBounds`, this is a conservative feasibility (dominance) relation;
-§4.5's *effective alignment* is its least element (the exact max of the
-finitely many declarations resolving to the allocation). -/
-structure DeclCoherent (pd : ParamDecl P) (s : SW P K)
-    (len alignLog : Alloc P K → ℕ) : Prop where
-  param_len : ∀ p, Alloc.param p ∈ s.forget.buffers →
-    len (.param p) = pd.len p
-  param_align : ∀ p, Alloc.param p ∈ s.forget.buffers →
-    pd.alignLog p ≤ alignLog (.param p)
-  fresh_len : ∀ l ∈ s.leaves, ∀ k : Fin l.sig.nOut, l.sig.prov k = none →
-    len (.prod (l.mint k)) = l.sig.freshLen k
-  in_align : ∀ l ∈ s.leaves, ∀ j : Fin l.sig.nIn,
-    l.sig.inAlignLog j ≤ alignLog (l.bind j)
-  fresh_align : ∀ l ∈ s.leaves, ∀ k : Fin l.sig.nOut, l.sig.prov k = none →
-    l.sig.freshAlignLog k ≤ alignLog (.prod (l.mint k))
+/-- Arena alignment exponent (4.5): `max({1} ∪ { align(a) })`, i.e. exponent
+`max({0} ∪ { alignLog(a) })` — computed, assignment-independent. -/
+def SW.arenaAlignLog (pd : ParamDecl P) (s : SW P K) : ℕ :=
+  s.allocList.foldr (fun a acc => max (s.effAlignLog pd a) acc) 0
 
-/-- A **feasible finalization** (4.5): the object `finalize` returns one of,
-bundled with its validity evidence.  The term lies in `finalize`'s domain
-(`Finalizable` = `W_wf`, 3.3/4.1); the length/alignment functions cohere
-with the declarations (`DeclCoherent`); the offsets satisfy 4.5
-(`Assignment`); and the emitted arena carries dominating bounds
-(`ArenaBounds`, 4.6).  The schedule half of the spec's pair (S, assignment)
-is `s` itself — an `SW` already carries its Par modes.  Only through this
-bundle do the arena structures attach to a valid finalization: none of the
-component relations alone certifies one (in particular, a length-invalid
-term admits an `Assignment` but no `FeasibleFinalization`). -/
-structure FeasibleFinalization (pd : ParamDecl P) (s : SW P K)
-    (len alignLog : Alloc P K → ℕ) where
+theorem Assignment.le_arenaSize {pd : ParamDecl P} {s : SW P K}
+    (A : Assignment pd s) {a : Alloc P K} (ha : a ∈ s.forget.buffers) :
+    A.offset a + s.allocLen pd a ≤ A.arenaSize := by
+  unfold Assignment.arenaSize
+  exact le_foldr_max (fun a => A.offset a + s.allocLen pd a)
+    (SW.mem_allocList_iff.mpr ha)
+
+theorem SW.effAlignLog_le_arenaAlignLog {pd : ParamDecl P} {s : SW P K}
+    {a : Alloc P K} (ha : a ∈ s.forget.buffers) :
+    s.effAlignLog pd a ≤ s.arenaAlignLog pd := by
+  unfold SW.arenaAlignLog
+  exact le_foldr_max (fun a => s.effAlignLog pd a)
+    (SW.mem_allocList_iff.mpr ha)
+
+/-- **D16 (alignment soundness)**: every alignment is a power of two (the
+log₂ encoding), so divisibility totally orders them and max = lcm — a base
+address aligned to the arena alignment is aligned for every allocation:
+`base + offset(a) ≡ 0 (mod align(a))`, which is what makes 4.5's maxima
+sufficient for the ABI (4.7). -/
+theorem Assignment.address_aligned {pd : ParamDecl P} {s : SW P K}
+    (A : Assignment pd s) {base : ℕ}
+    (hbase : base % 2 ^ s.arenaAlignLog pd = 0) {a : Alloc P K}
+    (ha : a ∈ s.forget.buffers) :
+    (base + A.offset a) % 2 ^ s.effAlignLog pd a = 0 := by
+  have hdvd : (2 : ℕ) ^ s.effAlignLog pd a ∣ 2 ^ s.arenaAlignLog pd :=
+    Nat.pow_dvd_pow 2 (SW.effAlignLog_le_arenaAlignLog ha)
+  have h1 : (2 : ℕ) ^ s.effAlignLog pd a ∣ base :=
+    Nat.dvd_trans hdvd (Nat.dvd_of_mod_eq_zero hbase)
+  have h2 : (2 : ℕ) ^ s.effAlignLog pd a ∣ A.offset a :=
+    Nat.dvd_of_mod_eq_zero (A.aligned a ha)
+  exact Nat.mod_eq_zero_of_dvd (Nat.dvd_add h1 h2)
+
+/-- A **feasible finalization** (4.5): the term lies in `finalize`'s domain
+(`Finalizable` = `W_wf`) together with an assignment over the canonical
+lengths and effective alignments.  The schedule half of the spec's pair
+(S, assignment) is `s` itself; arena size and alignment are computed from
+the assignment, so non-canonical metadata is unrepresentable — a
+length-invalid term admits no bundle, and an allocation-free term gets the
+computed size 0 / alignment 2⁰ = 1 of 4.5. -/
+structure FeasibleFinalization (pd : ParamDecl P) (s : SW P K) where
   finalizable : Finalizable pd s
-  declCoherent : DeclCoherent pd s len alignLog
-  assignment : Assignment s len alignLog
-  arenaSize : ℕ
-  arenaAlignLog : ℕ
-  bounds : ArenaBounds s len alignLog assignment arenaSize arenaAlignLog
+  assignment : Assignment pd s
 
 /-! ### D10/D12 at the assignment level -/
 
 /-- **D10, discharged by 4.5**: under any valid assignment, a node's fresh
 output is address-disjoint from each of its inputs — for positive lengths,
 every node's input and fresh-output byte ranges are disjoint. -/
-theorem Assignment.fresh_input_disjoint {s : SW P K}
-    {len alignLog : Alloc P K → ℕ} (A : Assignment s len alignLog)
-    (hs : SWF s) {i : ℕ} {l : LeafInst P K} (hl : s.leaves[i]? = some l)
-    (j : Fin l.sig.nIn) {k : Fin l.sig.nOut} (hfresh : l.sig.prov k = none) :
-    ∀ x, InSpan (A.offset (l.bind j)) (len (l.bind j)) x →
-      ¬ InSpan (A.offset (.prod (l.mint k))) (len (.prod (l.mint k))) x := by
+theorem Assignment.fresh_input_disjoint {pd : ParamDecl P} {s : SW P K}
+    (A : Assignment pd s) (hs : SWF s) {i : ℕ} {l : LeafInst P K}
+    (hl : s.leaves[i]? = some l) (j : Fin l.sig.nIn) {k : Fin l.sig.nOut}
+    (hfresh : l.sig.prov k = none) :
+    ∀ x, InSpan (A.offset (l.bind j)) (s.allocLen pd (l.bind j)) x →
+      ¬ InSpan (A.offset (.prod (l.mint k)))
+          (s.allocLen pd (.prod (l.mint k))) x := by
   have hc : ConsumesAt s i (l.bind j) := ⟨l, hl, ⟨j, rfl⟩⟩
   have hbmem : l.bind j ∈ s.forget.buffers := hc.mem_buffers
   have hkmem : Alloc.prod (l.mint k) ∈ s.forget.buffers := by
     apply W.mem_buffers_iff_leaves.mpr
-    refine ⟨l, by rw [SW.leaves_forget]; exact List.mem_of_getElem? hl, Or.inr ⟨k, ?_⟩⟩
+    refine ⟨l, by rw [SW.leaves_forget]; exact List.mem_of_getElem? hl,
+      Or.inr ⟨k, ?_⟩⟩
     unfold LeafInst.resOut
     rw [hfresh]
   exact A.disjoint _ hbmem _ hkmem
@@ -280,37 +498,34 @@ theorem Assignment.fresh_input_disjoint {s : SW P K}
 
 /-- **D12, discharged by 4.5**: under any valid assignment, distinct
 interface allocations are pairwise address-disjoint — each is exclusively
-and stably placed, as the 4.2 contract demands, regardless of the schedule. -/
-theorem Assignment.interface_disjoint {s : SW P K}
-    {len alignLog : Alloc P K → ℕ} (A : Assignment s len alignLog)
-    (hs : SWF s) {a b : Alloc P K} (ha : a ∈ Interface s)
-    (hb : b ∈ Interface s) (hab : a ≠ b) :
-    ∀ x, InSpan (A.offset a) (len a) x → ¬ InSpan (A.offset b) (len b) x :=
+and stably placed, as 4.2's contract demands, regardless of the schedule. -/
+theorem Assignment.interface_disjoint {pd : ParamDecl P} {s : SW P K}
+    (A : Assignment pd s) (hs : SWF s) {a b : Alloc P K}
+    (ha : a ∈ Interface s) (hb : b ∈ Interface s) (hab : a ≠ b) :
+    ∀ x, InSpan (A.offset a) (s.allocLen pd a) x →
+      ¬ InSpan (A.offset b) (s.allocLen pd b) x :=
   A.disjoint _ (interface_subset_buffers ha) _ (interface_subset_buffers hb)
     hab (hs.conflict_interface ha hb)
 
 /-! ### D10/D12 through the feasible-finalization bundle -/
 
-/-- D10 for a feasible finalization: a node's fresh output is byte-disjoint
-from each of its inputs. -/
+/-- D10 for a feasible finalization. -/
 theorem FeasibleFinalization.fresh_input_disjoint {pd : ParamDecl P}
-    {s : SW P K} {len alignLog : Alloc P K → ℕ}
-    (F : FeasibleFinalization pd s len alignLog) {i : ℕ} {l : LeafInst P K}
+    {s : SW P K} (F : FeasibleFinalization pd s) {i : ℕ} {l : LeafInst P K}
     (hl : s.leaves[i]? = some l) (j : Fin l.sig.nIn) {k : Fin l.sig.nOut}
     (hfresh : l.sig.prov k = none) :
-    ∀ x, InSpan (F.assignment.offset (l.bind j)) (len (l.bind j)) x →
+    ∀ x, InSpan (F.assignment.offset (l.bind j))
+        (s.allocLen pd (l.bind j)) x →
       ¬ InSpan (F.assignment.offset (.prod (l.mint k)))
-          (len (.prod (l.mint k))) x :=
+          (s.allocLen pd (.prod (l.mint k))) x :=
   F.assignment.fresh_input_disjoint F.finalizable.swf hl j hfresh
 
-/-- D12 for a feasible finalization: distinct interface allocations are
-byte-disjoint. -/
+/-- D12 for a feasible finalization. -/
 theorem FeasibleFinalization.interface_disjoint {pd : ParamDecl P}
-    {s : SW P K} {len alignLog : Alloc P K → ℕ}
-    (F : FeasibleFinalization pd s len alignLog) {a b : Alloc P K}
+    {s : SW P K} (F : FeasibleFinalization pd s) {a b : Alloc P K}
     (ha : a ∈ Interface s) (hb : b ∈ Interface s) (hab : a ≠ b) :
-    ∀ x, InSpan (F.assignment.offset a) (len a) x →
-      ¬ InSpan (F.assignment.offset b) (len b) x :=
+    ∀ x, InSpan (F.assignment.offset a) (s.allocLen pd a) x →
+      ¬ InSpan (F.assignment.offset b) (s.allocLen pd b) x :=
   F.assignment.interface_disjoint F.finalizable.swf ha hb hab
 
 end WorkGraph
