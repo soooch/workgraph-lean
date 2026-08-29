@@ -143,6 +143,28 @@ theorem SWF.mayOverlap_input {s : SW P K} (hs : SWF s) {a b : Alloc P K}
   obtain ⟨m, hm⟩ := hs.exists_producer hb
   exact SW.not_prec_src (hall m hm.isUser .src hpa)
 
+/-- **D12** (reuse direction): an interface output may still reuse the space
+of an allocation wholly finished — producer and all consumers — before its
+own producer starts: such a pair does not conflict.  (Stated for any
+interface allocation; for an *input* the hypothesis is unsatisfiable, since
+nothing precedes σ — inputs stay fully pinned, `SWF.mayOverlap_input`.) -/
+theorem SWF.interface_not_mayOverlap_of_finished {s : SW P K} (hs : SWF s)
+    {a b : Alloc P K} (ha : a ∈ Interface s) (hb : b ∈ s.forget.buffers)
+    (hfin : ∀ n, IsUser s b n → ∀ m, IsProducer s a m → s.Prec n m) :
+    ¬ MayOverlap s a b := by
+  rw [hs.interface_mayOverlap_iff ha hb]
+  exact not_not_intro hfin
+
+/-- **D12** (pinning direction): conversely, nothing may be placed over an
+interface allocation from its producer onward — any single user of `b` that
+fails to precede `a`'s producer forces the conflict (τ ∈ users(a) forbids
+the ordering the other conjunct would need). -/
+theorem SWF.mayOverlap_interface_of_user_not_prec {s : SW P K} (hs : SWF s)
+    {a b : Alloc P K} {n m : PNode} (ha : a ∈ Interface s)
+    (hb : b ∈ s.forget.buffers) (hn : IsUser s b n) (hm : IsProducer s a m)
+    (hnp : ¬ s.Prec n m) : MayOverlap s a b :=
+  (hs.interface_mayOverlap_iff ha hb).mpr fun hall => hnp (hall n hn m hm)
+
 /-! ## §4.5 Arena and packing -/
 
 /-- Byte interval `[offset, offset + len)` membership. -/

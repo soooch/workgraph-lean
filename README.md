@@ -32,17 +32,23 @@ lake build
   spec's treatment of IDs as global names that survive composition unchanged
   (which D4 relies on).
 
-* **Eager substitution** (2.4): `series w₁ w₂` stores the *already rewritten*
-  right arm, so every ID-set equation of 2.3 holds definitionally ("the
-  composite contains the rewritten W₂").  Spec `Series(W₁, W₂, θ)` is the
+* **Elaborated terms, eager substitution** (1.1/2.4): terms carry their
+  current bindings and θ is formation-time data, not a term field — exactly
+  the spec's elaborated presentation.  `series w₁ w₂` stores the *already
+  rewritten* right arm, so every ID-set equation of 2.3 holds definitionally
+  ("the composite contains the rewritten W₂").  Spec Series formation is the
   smart constructor `W.mkSeries w₁ w₂ θ = W.series w₁ (w₂.rebind θ)`;
   `rebind` applies θ to each binding exactly once, simultaneously, matching
-  2.4's "applied once, never iterated" (cf. D2).
+  2.4's "applied once, never iterated" — the eager representation D2 names
+  (the semantics fixes only values, not representation).
 
 * **Well-formedness**: the inductive `WF` carves out exactly the terms built
-  by legal formations — parameter-valued leaf bindings (2.2), `ThetaFits`
-  (θ total on `inputs(W₂)`, with codomain `outputs(W₁)`, dom exactly the
-  inputs — 2.4, §6 "Partial θ rejected"), mint distinctness (2.1).
+  by the formations of 2.4 — parameter-valued leaf bindings (Instantiate),
+  `ThetaFits` (dom(θ) exactly `inputs(W₂)`, range in `outputs(W₁)` — 2.4,
+  §6 "Partial θ rejected"), mint distinctness (2.1).  2.4's "operands never
+  share node instances; reuse requires re-instantiation" surfaces as the
+  mint-distinctness side condition — pinned by
+  `Examples.not_swf_duplicate_leaf` / `Examples.swf_two_instances`.
 
 * **Node instances** (4.3): identified by index into the SP tree's
   left-to-right leaf enumeration; σ/τ are the extra `PNode`s of 4.2.
@@ -67,9 +73,9 @@ lake build
 | D8 ≺ strict partial order | `SW.prec_irrefl`, `SW.prec_asymm` (transitivity by construction); the linearization embedding is `SW.linRank`/`SW.nodeRank` + `SGen.linRank_lt_linRank`; endpoints: `SW.not_prec_src`, `SW.not_sink_prec`, `SW.src_prec_sink` |
 | D9 dataflow respects ≺ | `SWF.producer_prec_consumer`, `producer_prec_sink` |
 | D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` (ping-pong) |
-| D12 interface pinning | `SWF.interface_mayOverlap_iff` (the reduction), `SWF.mayOverlap_interface`, `SWF.mayOverlap_input` (fully pinned); discharged by 4.5: `Assignment.interface_disjoint` |
+| D12 interface pinning | `SWF.interface_mayOverlap_iff` (the reduction), `SWF.mayOverlap_interface`, `SWF.mayOverlap_input` (fully pinned), `SWF.interface_not_mayOverlap_of_finished` (an interface output may reuse space wholly finished before its producer), `SWF.mayOverlap_interface_of_user_not_prec` (nothing placed over it from its producer onward); discharged by 4.5: `Assignment.interface_disjoint` |
 | D13 series order exceeds data dependency | load-bearing inside the D14 proofs (the `seriesCross` step orders dead ends too); the ordering clauses themselves are the `SGen` generators |
-| D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh`, `SWF.conc_mayOverlap_fresh` (+ `SW.conc_prec_side`: ≺ never crosses a concurrent Par) |
+| D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_mayOverlap_internal_fresh`, `SWF.conc_mayOverlap_fresh` (+ `SW.conc_prec_side`: ≺ never crosses a concurrent Par) |
 
 Not formalized (out of scope, faithful to the spec's own scoping): 3.1/3.2
 byte-level execution semantics (the model's ordering side is captured by
@@ -87,3 +93,7 @@ correctness facts any packer inherits.
 proves: well-formedness, §3.3 validation, the interface/internal split
 (input `x`, output `t₁`, internal `t₀`), A ≺ B (both from the Series clause
 and re-derived from dataflow via D9), and the concrete D10/D12 conflicts.
+It also pins instance-by-instantiation (1.1/2.4): a Par of the *same* leaf
+instance is rejected in every mode (`not_swf_duplicate_leaf`), while two
+distinct instantiations of the same primitive signature compose fine
+(`swf_two_instances`).

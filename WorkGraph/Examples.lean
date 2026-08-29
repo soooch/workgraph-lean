@@ -158,4 +158,30 @@ theorem mayOverlap_chain : MayOverlap sChain (.param "x") (.prod 0) :=
 theorem mayOverlap_interface_chain : MayOverlap sChain (.param "x") (.prod 1) :=
   swf_chain.mayOverlap_input ⟨0, rfl⟩ (Or.inr (Or.inr ⟨(0 : Fin 1), rfl⟩))
 
+/-! ### Instance identity is by instantiation (1.1/2.4)
+
+Formation operands never share node instances: "a term is consumed by the
+formation that uses it, and reusing one requires re-instantiation" (2.4).
+In this formalization that discipline surfaces as the mint-distinctness
+side condition of well-formedness (2.1). -/
+
+/-- **Duplicate-leaf rejection**: putting the *same* leaf instance on both
+sides of a Par is not well-formed, in any mode — both arms would mint the
+same produced ID, violating global distinctness (2.1). -/
+theorem not_swf_duplicate_leaf (m : Mode) :
+    ¬ SWF (SW.par m (SW.leaf leafA) (SW.leaf leafA)) := by
+  intro h
+  cases h with
+  | par _ _ hd => exact hd 0 ⟨0, rfl, rfl⟩ ⟨0, rfl, rfl⟩
+
+/-- The positive companion: two *distinct instantiations* — here of the same
+primitive signature `copySig`, with distinct minted IDs and distinct
+bindings — compose fine in Par, in any mode.  Instance identity is by
+instantiation, never by primitive symbol (1.1). -/
+theorem swf_two_instances (m : Mode) :
+    SWF (SW.par m (SW.leaf leafA) (SW.leaf leafB)) :=
+  SWF.par (SWF.leaf (fun _ => trivial) (fun i i' _ _ _ => finOne i i'))
+    (SWF.leaf (fun _ => trivial) (fun i i' _ _ _ => finOne i i'))
+    mintDisjoint_AB
+
 end WorkGraph.Examples

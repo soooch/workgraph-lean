@@ -161,10 +161,10 @@ theorem SWF.series_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
 
 /-! ## D14: sequentialized-Par reuse -/
 
-/-- **D14 (sequentialized Par)**: in `Par` with mode `seq(1,2)`, an internal
-allocation of the first branch never conflicts with a fresh allocation of
-the second — internal buffers of the earlier branch are reusable by the
-later one.  (`seq(2,1)` is the mirror image.) -/
+/-- **D14 (sequentialized Par, `seq(1,2)`)**: an internal allocation of the
+first branch never conflicts with a fresh allocation of the second —
+internal buffers of the earlier branch are reusable by the later one.
+(The `seq(2,1)` mirror is `SWF.par21_not_mayOverlap_internal_fresh`.) -/
 theorem SWF.par12_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
     (h₁ : SWF s₁) (h₂ : SWF s₂)
     (hd : MintDisjoint s₁.forget s₂.forget)
@@ -223,6 +223,73 @@ theorem SWF.par12_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
     rw [hs_def, SW.nLeaves_par] at hlt
     omega
   have e : s₁.nLeaves + (i₀ - s₁.nLeaves) = i₀ := by omega
+  rw [e] at hcross
+  exact Relation.TransGen.single (SW.Gen.struct hcross)
+
+/-- **D14 (sequentialized Par, `seq(2,1)`)**: the mirror image — an internal
+allocation of the *second* branch (which `seq(2,1)` runs first) never
+conflicts with a fresh allocation of the first: internal buffers of the
+earlier branch are reusable by the later one, whichever way the Par is
+sequentialized. -/
+theorem SWF.par21_not_mayOverlap_internal_fresh {s₁ s₂ : SW P K}
+    (h₁ : SWF s₁) (h₂ : SWF s₂)
+    (hd : MintDisjoint s₁.forget s₂.forget)
+    {a : Alloc P K} (ha : a ∈ s₂.forget.internal)
+    {k : K} (hk : k ∈ s₁.forget.minted) :
+    ¬ MayOverlap (SW.par .seq21 s₁ s₂) a (.prod k) := by
+  set s : SW P K := SW.par .seq21 s₁ s₂ with hs_def
+  have hwf₁ := h₁.forget_wf
+  have hwf₂ := h₂.forget_wf
+  have hlen : s₁.leaves.length = s₁.nLeaves := rfl
+  obtain ⟨hb, hni, hno⟩ := ha
+  obtain ⟨k', rfl⟩ : ∃ k', a = Alloc.prod k' := by
+    cases a with
+    | param p => exact absurd (hwf₂.param_mem_inputs_of_mem_buffers p hb) hni
+    | prod k' => exact ⟨k', rfl⟩
+  have hk'₂ : k' ∈ s₂.forget.minted := hwf₂.mem_minted_of_prod_mem_buffers k' hb
+  -- internality survives into the composite (D5 for Par)
+  have hint : Alloc.prod k' ∈ s.forget.internal := by
+    have : s.forget = W.par s₁.forget s₂.forget := rfl
+    rw [this, hwf₁.internal_par hwf₂ hd]
+    exact Or.inr ⟨hb, hni, hno⟩
+  -- every user of a is an instance of the second branch (D6)
+  have huser : ∀ n, IsUser s (Alloc.prod k') n →
+      ∃ i, n = .inst i ∧ s₁.nLeaves ≤ i ∧ i - s₁.nLeaves < s₂.nLeaves := by
+    rintro n (hp | ⟨i, rfl, hc⟩ | ⟨rfl, hif⟩)
+    · obtain ⟨i₀, rfl, hm⟩ := hp
+      refine ⟨i₀, rfl, ?_⟩
+      unfold MintsAt at hm
+      rw [hs_def, SW.leaves_par, atIdx_append] at hm
+      rcases hm with ⟨_, hm⟩ | ⟨hi₀, hm⟩
+      · exact absurd (hd k' (MintsAt.mem_minted hm) hk'₂) not_false
+      · exact ⟨by rwa [hlen] at hi₀, AtIdx.lt_length hm⟩
+    · refine ⟨i, rfl, ?_⟩
+      unfold ConsumesAt at hc
+      rw [hs_def, SW.leaves_par, atIdx_append] at hc
+      rcases hc with ⟨_, hc⟩ | ⟨hi, hc⟩
+      · exfalso
+        have hc₁ : ConsumesAt s₁ _ (Alloc.prod k') := hc
+        exact hd k'
+          (hwf₁.mem_minted_of_prod_mem_buffers k' hc₁.mem_buffers) hk'₂
+      · exact ⟨by rwa [hlen] at hi, AtIdx.lt_length hc⟩
+    · exact absurd hif (fun hif => hif.elim hint.2.1 hint.2.2)
+  intro hov
+  refine hov.1 ?_
+  rintro n hn m hm
+  obtain ⟨i, rfl, hge, hlt₂⟩ := huser n hn
+  obtain ⟨i₀, rfl, hm⟩ := hm
+  -- the fresh allocation's producer sits in the first branch
+  have hm₁ : i₀ < s₁.nLeaves := by
+    unfold MintsAt at hm
+    rw [hs_def, SW.leaves_par, atIdx_append] at hm
+    rcases hm with ⟨hi₀, _⟩ | ⟨_, hm⟩
+    · rwa [hlen] at hi₀
+    · exact absurd (hd k hk (MintsAt.mem_minted hm)) not_false
+  -- the seq(2,1) clause orders all of the second branch before the first
+  have hcross : SW.SGen s (s₁.nLeaves + (i - s₁.nLeaves)) i₀ := by
+    rw [hs_def]
+    exact SW.SGen.parCross21 hlt₂ hm₁
+  have e : s₁.nLeaves + (i - s₁.nLeaves) = i := by omega
   rw [e] at hcross
   exact Relation.TransGen.single (SW.Gen.struct hcross)
 
