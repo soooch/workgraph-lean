@@ -74,7 +74,7 @@ lake build
 | D7 no in-place / unique writer | `SWF.mintsAt_unique`, `SWF.exists_producer` (with 3.1 semantic; "no syntax for a second writer" is structural: `prov` re-exposes untouched) |
 | D8 ≺ strict partial order | `SW.prec_irrefl`, `SW.prec_asymm` (transitivity by construction); the linearization embedding is `SW.linRank`/`SW.nodeRank` + `SGen.linRank_lt_linRank`; endpoints: `SW.not_prec_src`, `SW.not_sink_prec`, `SW.src_prec_sink` |
 | D9 dataflow respects ≺ | `SWF.producer_prec_consumer`, `producer_prec_sink` |
-| D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` (per-node input/fresh-output byte disjointness; the spec's chain corollary — needing ≥ 2 interior edges — is not separately formalized) |
+| D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` and `FeasibleFinalization.fresh_input_disjoint` (per-node input/fresh-output byte disjointness — also the conflict content of the spec's allocation-based ping-pong corollary; the two-buffer counting reading is not separately formalized) |
 | D12 interface pinning | `SWF.interface_mayOverlap_iff` (the reduction), `SWF.mayOverlap_interface`, `SWF.mayOverlap_input` (fully pinned), `SWF.interface_not_mayOverlap_of_finished` (an interface output may reuse space wholly finished before its producer), `SWF.mayOverlap_interface_of_user_not_prec` (nothing placed over it from its producer onward); discharged by 4.5: `Assignment.interface_disjoint` |
 | D13 series order exceeds data dependency | load-bearing inside the D14 proofs (the `seriesCross` step orders dead ends too); the ordering clauses themselves are the `SGen` generators |
 | D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_mayOverlap_internal_fresh`; concurrent Par: `SWF.conc_mayOverlap_of_cross_users` — any two allocations with users on opposite branches of a concurrent Par *anywhere in the schedule* conflict (via `SW.ConcBlock.not_cross_prec`: ≺ never crosses a concurrent Par, even inside a composite), with `SWF.conc_mayOverlap_fresh` the root-level fresh/fresh special case |
@@ -86,12 +86,18 @@ finalization *algorithm* and selection policy (§4.5 minimization / D15
 NP-hardness — the §6 open objective), and the emitted-artifact ABI
 (4.6/4.7).  `Finalizable` (structural well-formedness + §3.3 length
 validity) is the formal counterpart of `finalize`'s domain `W_wf`
-(3.3/4.1); an assignment belongs to a valid finalization only for a
-`Finalizable` term.  `Assignment`/`ArenaBounds`/`DeclCoherent` are
-*conservative feasibility (dominance) relations* for the §4.5 constraint
-system — §4.5's exact effective alignment and arena size/alignment are
-their least elements, not separately defined here — and D10/D12/D14 are
-correctness facts any packer inherits.
+(3.3/4.1), and `FeasibleFinalization` is the bundled object `finalize`
+returns one of: a `Finalizable` term with coherent length/alignment
+functions (`DeclCoherent`), a 4.5 `Assignment`, and dominating
+`ArenaBounds` — only through this bundle do the arena structures attach to
+a valid finalization (a length-invalid term admits an `Assignment` but no
+`FeasibleFinalization`), and the D10/D12 discharge theorems are restated
+on it (`FeasibleFinalization.fresh_input_disjoint` / `.interface_disjoint`).
+`Assignment`/`ArenaBounds`/`DeclCoherent` are *conservative feasibility
+(dominance) relations* for the §4.5 constraint system — §4.5's exact
+effective alignment and arena size/alignment are their least elements, not
+separately defined here — and D10/D12/D14 are correctness facts any packer
+inherits.
 
 ## Worked example
 

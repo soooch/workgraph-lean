@@ -183,8 +183,9 @@ functions on allocation IDs (alignment stored as log₂, 1.2): every
 allocation of the term gets an aligned offset, and conflicting allocations
 get disjoint byte intervals.  (An empty-length allocation occupies no bytes,
 so its interval is disjoint from everything, matching `∩ = ∅` in 4.5.)
-A feasible finalization (4.5) is a schedule together with an assignment for
-a `Finalizable` term — `finalize : W_wf → G` is defined on nothing less. -/
+By itself this structure does not certify a finalization — that is the
+bundled `FeasibleFinalization` below, which ties it to a `Finalizable`
+term. -/
 structure Assignment (s : SW P K) (len alignLog : Alloc P K → ℕ) where
   offset : Alloc P K → ℕ
   aligned : ∀ a ∈ s.forget.buffers, offset a % 2 ^ alignLog a = 0
@@ -225,6 +226,25 @@ structure DeclCoherent (pd : ParamDecl P) (s : SW P K)
   fresh_align : ∀ l ∈ s.leaves, ∀ k : Fin l.sig.nOut, l.sig.prov k = none →
     l.sig.freshAlignLog k ≤ alignLog (.prod (l.mint k))
 
+/-- A **feasible finalization** (4.5): the object `finalize` returns one of,
+bundled with its validity evidence.  The term lies in `finalize`'s domain
+(`Finalizable` = `W_wf`, 3.3/4.1); the length/alignment functions cohere
+with the declarations (`DeclCoherent`); the offsets satisfy 4.5
+(`Assignment`); and the emitted arena carries dominating bounds
+(`ArenaBounds`, 4.6).  The schedule half of the spec's pair (S, assignment)
+is `s` itself — an `SW` already carries its Par modes.  Only through this
+bundle do the arena structures attach to a valid finalization: none of the
+component relations alone certifies one (in particular, a length-invalid
+term admits an `Assignment` but no `FeasibleFinalization`). -/
+structure FeasibleFinalization (pd : ParamDecl P) (s : SW P K)
+    (len alignLog : Alloc P K → ℕ) where
+  finalizable : Finalizable pd s
+  declCoherent : DeclCoherent pd s len alignLog
+  assignment : Assignment s len alignLog
+  arenaSize : ℕ
+  arenaAlignLog : ℕ
+  bounds : ArenaBounds s len alignLog assignment arenaSize arenaAlignLog
+
 /-! ### D10/D12 at the assignment level -/
 
 /-- **D10, discharged by 4.5**: under any valid assignment, a node's fresh
@@ -257,5 +277,29 @@ theorem Assignment.interface_disjoint {s : SW P K}
     ∀ x, InSpan (A.offset a) (len a) x → ¬ InSpan (A.offset b) (len b) x :=
   A.disjoint _ (interface_subset_buffers ha) _ (interface_subset_buffers hb)
     hab (hs.mayOverlap_interface ha hb)
+
+/-! ### D10/D12 through the feasible-finalization bundle -/
+
+/-- D10 for a feasible finalization: a node's fresh output is byte-disjoint
+from each of its inputs. -/
+theorem FeasibleFinalization.fresh_input_disjoint {pd : ParamDecl P}
+    {s : SW P K} {len alignLog : Alloc P K → ℕ}
+    (F : FeasibleFinalization pd s len alignLog) {i : ℕ} {l : LeafInst P K}
+    (hl : s.leaves[i]? = some l) (j : Fin l.sig.nIn) {k : Fin l.sig.nOut}
+    (hfresh : l.sig.prov k = none) :
+    ∀ x, InSpan (F.assignment.offset (l.bind j)) (len (l.bind j)) x →
+      ¬ InSpan (F.assignment.offset (.prod (l.mint k)))
+          (len (.prod (l.mint k))) x :=
+  F.assignment.fresh_input_disjoint F.finalizable.swf hl j hfresh
+
+/-- D12 for a feasible finalization: distinct interface allocations are
+byte-disjoint. -/
+theorem FeasibleFinalization.interface_disjoint {pd : ParamDecl P}
+    {s : SW P K} {len alignLog : Alloc P K → ℕ}
+    (F : FeasibleFinalization pd s len alignLog) {a b : Alloc P K}
+    (ha : a ∈ Interface s) (hb : b ∈ Interface s) (hab : a ≠ b) :
+    ∀ x, InSpan (F.assignment.offset a) (len a) x →
+      ¬ InSpan (F.assignment.offset b) (len b) x :=
+  F.assignment.interface_disjoint F.finalizable.swf ha hb hab
 
 end WorkGraph

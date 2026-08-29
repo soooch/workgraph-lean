@@ -102,9 +102,9 @@ so built is *structurally well-formed*:
   naming the same parameter.
 
 Formation operands are *closed*: structural well-formedness is a property of
-whole terms as formed, and by D3 a closed term's inputs are parameters.
-2.1's global distinctness surfaces at formation as a side condition: the two
-operands of Series and Par mint disjoint produced-ID sets. A subterm of a
+whole terms as formed. 2.1's global distinctness surfaces at formation as a
+side condition: the two operands of Series and Par mint disjoint produced-ID
+sets. A subterm of a
 closed term is merely *scoped*: enclosing formations may have rewritten its
 bindings to produced IDs, and scoped subterms are not formation operands —
 the rewritten arm W₂′ exists only inside its composite.
@@ -321,13 +321,16 @@ producer(b) = N, and ≺ is strict (D8), so N ⊀ N. Second conjunct: N ∈
 users(b), and N ≺ producer(a) is impossible since producer(a) ≺ N (D9) and ≺
 is irreflexive. Hence `mayOverlap(a, b)` and 4.5 forces address disjointness —
 a node's fresh output can never occupy an input's space. Corollary (positive
-lengths): every node's input and fresh-output byte ranges are disjoint. In a
-chain with at least two interior edges, consecutive interior allocations
-conflict — their shared node consumes one and freshly produces the other —
-so at least two interior buffers are simultaneously placed: the ping-pong
-lower bound, over interior storage only; pinned interface allocations (D12)
-sit on top of it. (Sufficiency of exactly two interior buffers is a separate
-claim, needing equal lengths and compatible alignments.)
+lengths): every node's input and fresh-output byte ranges are disjoint.
+Whenever some node consumes an internal allocation and freshly produces an
+internal allocation (distinct by 2.1), both of positive length, the two
+conflict — so at least two interior buffers are simultaneously placed: the
+ping-pong lower bound, over interior storage only; pinned interface
+allocations (D12) sit on top of it. The hypothesis is on allocations, not
+edges: passthrough lets consecutive interior edges carry a single allocation
+(A → B, B forwarding a → C), in which case no such pair need exist.
+(Sufficiency of exactly two interior buffers is a separate claim, needing
+equal lengths and compatible alignments.)
 
 **D11 (Provenance opacity).** By 3.2, from a node's perspective an input is
 bytes of declared `(len, align)` — behavior cannot depend on addresses or on
@@ -386,8 +389,9 @@ and for `Par` with mode `seq(i,j)`, likewise every `a ∈ internal(Wᵢ)` — th
 earlier branch — is reusable by every fresh allocation in Wⱼ.
 
 **D15 (Packing is DSA).** Minimizing arena size under 4.5 is dynamic storage
-allocation on the conflict graph — NP-hard, and the hardness is realizable
-within the model: any DSA instance `{(sᵢ, eᵢ, lenᵢ)}` with WLOG sᵢ < eᵢ
+allocation on the conflict graph — NP-hard, and — under the open-world
+premise of D6, tick signatures being freely declarable — the hardness is
+realizable within the model: any DSA instance `{(sᵢ, eᵢ, lenᵢ)}` with WLOG sᵢ < eᵢ
 (subdivide ticks; hardness is preserved) is realized by a pure Series chain
 of tick nodes (empty slot sets permitted by 1.2, so source and terminal ticks
 need no dummies) where tick sᵢ mints allocation i fresh, ticks strictly
