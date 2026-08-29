@@ -12,8 +12,8 @@ computes as the spec says:
 * it has a well-formed schedule with A ≺ B (`prec_chain`, and again via the
   generic D9 theorem in `prec_chain'`);
 * D10 concretely: A's fresh output conflicts with A's input
-  (`mayOverlap_chain`) — the ping-pong obligation — and D12 concretely: the
-  input is pinned against the output (`mayOverlap_interface_chain`).
+  (`mayOverlap_chain`), and D12 concretely: the input is pinned against the
+  output (`mayOverlap_interface_chain`).
 
 Parameters are named by strings, produced IDs by naturals.  (`abbrev` keeps
 the slot types reducible so that `Fin` literals elaborate.)
@@ -150,7 +150,7 @@ theorem prec_chain' : sChain.Prec (.inst 0) (.inst 1) := by
   · exact ⟨0, rfl, leafA, rfl, ⟨0, rfl, rfl⟩⟩
 
 /-- **D10 concretely**: A's fresh output `t₀` conflicts with A's input `x` —
-under any valid assignment they get disjoint intervals (ping-pong). -/
+under any valid assignment their byte intervals are disjoint. -/
 theorem mayOverlap_chain : MayOverlap sChain (.param "x") (.prod 0) :=
   swf_chain.mayOverlap_fresh_input (i := 0) (l := leafA) rfl 0 (k := 0) rfl
 
@@ -158,26 +158,29 @@ theorem mayOverlap_chain : MayOverlap sChain (.param "x") (.prod 0) :=
 theorem mayOverlap_interface_chain : MayOverlap sChain (.param "x") (.prod 1) :=
   swf_chain.mayOverlap_input ⟨0, rfl⟩ (Or.inr (Or.inr ⟨(0 : Fin 1), rfl⟩))
 
-/-! ### Instance identity is by instantiation (1.1/2.4)
+/-! ### Produced-ID distinctness at formation (1.1/2.1/2.4)
 
-Formation operands never share node instances: "a term is consumed by the
-formation that uses it, and reusing one requires re-instantiation" (2.4).
-In this formalization that discipline surfaces as the mint-distinctness
-side condition of well-formedness (2.1). -/
+A node instance is a leaf *occurrence* — a position in the SP tree (1.1);
+two occurrences are distinct instances even when their leaf descriptions
+are equal.  What must never be duplicated is minted produced-ID *names*:
+2.1's global distinctness surfaces at formation as the side condition that
+the two operands of Series and Par mint disjoint ID sets (`MintDisjoint`). -/
 
-/-- **Duplicate-leaf rejection**: putting the *same* leaf instance on both
-sides of a Par is not well-formed, in any mode — both arms would mint the
-same produced ID, violating global distinctness (2.1). -/
-theorem not_swf_duplicate_leaf (m : Mode) :
+/-- **Produced-ID collision test**: a Par whose two occurrences carry equal
+leaf descriptions minting the same produced ID is rejected in every mode —
+the operands' minted sets are not disjoint (2.1/2.4).  (The two tree
+positions are distinct instances; it is the ID collision that is
+ill-formed, not the occurrence of equal descriptions per se.) -/
+theorem not_swf_mint_collision (m : Mode) :
     ¬ SWF (SW.par m (SW.leaf leafA) (SW.leaf leafA)) := by
   intro h
   cases h with
   | par _ _ hd => exact hd 0 ⟨0, rfl, rfl⟩ ⟨0, rfl, rfl⟩
 
-/-- The positive companion: two *distinct instantiations* — here of the same
-primitive signature `copySig`, with distinct minted IDs and distinct
-bindings — compose fine in Par, in any mode.  Instance identity is by
-instantiation, never by primitive symbol (1.1). -/
+/-- The positive companion: two occurrences of the same primitive signature
+`copySig` with disjoint minted IDs (and distinct bindings) compose fine in
+Par, in any mode — identity is by occurrence, never by primitive symbol
+(1.1). -/
 theorem swf_two_instances (m : Mode) :
     SWF (SW.par m (SW.leaf leafA) (SW.leaf leafB)) :=
   SWF.par (SWF.leaf (fun _ => trivial) (fun i i' _ _ _ => finOne i i'))

@@ -16,11 +16,11 @@ W ::= Leaf(N, bind) | Series(W₁, W₂) | Par(W₁, W₂)
 where N ranges over primitive nodes and `bind : InSlots(N) → 𝔸` is the
 leaf's current binding (2.2). Terms are constructed only by the formations
 of 2.4, which take β (leaf instantiation) and θ (Series) as arguments and do
-not retain them. Each leaf is a distinct node instance of its primitive N,
-created fresh at instantiation (2.4): two instantiations of the same N are
-different leaves, and `res`, `producer`, and ≺ (4.3) range over instances,
-never over primitive symbols. The term tree is called the SP tree.
-(Intuition, non-normative: a work term corresponds to a two-terminal
+not retain them. A node instance is a leaf occurrence — a position in the SP
+tree. Two occurrences are distinct instances even when their leaf
+descriptions are equal, and `res`, `producer`, and ≺ (4.3) range over
+instances, never over primitive symbols. The term tree is called the SP
+tree. (Intuition, non-normative: a work term corresponds to a two-terminal
 series-parallel DAG, Series composing end-to-end and Par side-by-side.)
 
 **1.2 (Primitive node).** A primitive node N declares:
@@ -81,8 +81,7 @@ internal(W) = buffers(W) − inputs(W) − outputs(W)
 so built is *structurally well-formed*:
 
 - **Instantiate**: given N and `β : InSlots(N) → 𝔸_π`, form `Leaf(N, β)` — a
-  leaf whose binding is β, carrying a fresh node-instance identity (1.1) and
-  minting fresh IDs at its ★ slots (2.1).
+  leaf whose binding is β; its ★ slots mint fresh IDs (2.1).
 - **Series**: given structurally well-formed W₁, W₂ and a substitution θ with
   `dom(θ) = inputs(W₂)` exactly and `range(θ) ⊆ outputs(W₁)` (surjectivity
   not required), both judged against W₂'s bindings as they stand at
@@ -104,13 +103,11 @@ so built is *structurally well-formed*:
 
 Formation operands are *closed*: structural well-formedness is a property of
 whole terms as formed, and by D3 a closed term's inputs are parameters.
-Operands never share node instances — a term is consumed by the formation
-that uses it, and reusing one requires re-instantiation. A subterm of a
+2.1's global distinctness surfaces at formation as a side condition: the two
+operands of Series and Par mint disjoint produced-ID sets. A subterm of a
 closed term is merely *scoped*: enclosing formations may have rewritten its
 bindings to produced IDs, and scoped subterms are not formation operands —
-the rewritten arm W₂′ exists only inside its composite. Hence every θ is
-judged against a closed arm, so `dom(θ) = inputs(W₂) ⊆ 𝔸_π` (D3/D4): a
-produced-valued binding is never in any θ's domain.
+the rewritten arm W₂′ exists only inside its composite.
 
 ## 3. Data Semantics
 
@@ -282,12 +279,13 @@ Inward: producer(a) ∈ W, since by D4 a non-locally-minted or parameter ID in
 absence from `outputs(W)` leaves no forwarding path out, and sharing by
 parameter name is excluded since a ∉ 𝔸_π. Conversely, interface members are
 exposed: nothing in W's structure certifies a member of
-`inputs(W) ∪ outputs(W)` dead, and since 1.2 places no closure on declarable
-signatures, an enclosing context witnessing an outside user is always
-constructible — a Par sibling naming the same parameter for `a ∈ inputs(W)`,
-a downstream Series consumer of matching `len` for `a ∈ outputs(W)`.
-(Relative to a fixed, poorer primitive universe, only the syntactic reading
-holds.) So `internal(W)` is exactly the set W's structure alone proves dead.
+`inputs(W) ∪ outputs(W)` dead. Under an explicit open-world premise — that a
+compatible consumer signature may always be declared, which 1.2 permits but
+does not assert — an enclosing countercontext witnessing an outside user is
+moreover constructible: a Par sibling naming the same parameter for
+`a ∈ inputs(W)`, a downstream Series consumer of matching `len` for
+`a ∈ outputs(W)`. So `internal(W)` is sound unconditionally, and maximal
+under the open-world premise.
 
 **D7 (No in-place — unrepresentable).** No allocation has more than one
 writer — its true producer: 3.1 forbids writes to non-fresh allocations, and
@@ -323,12 +321,13 @@ producer(b) = N, and ≺ is strict (D8), so N ⊀ N. Second conjunct: N ∈
 users(b), and N ≺ producer(a) is impossible since producer(a) ≺ N (D9) and ≺
 is irreflexive. Hence `mayOverlap(a, b)` and 4.5 forces address disjointness —
 a node's fresh output can never occupy an input's space. Corollary (positive
-lengths): every node's input and fresh-output byte ranges are disjoint;
-hence in a chain, consecutive interior allocations conflict, so at least two
-interior buffers are simultaneously placed — the ping-pong lower bound.
-(Sufficiency of exactly two interior buffers is a separate claim, needing
-equal lengths and compatible alignments, and sits on top of the pinned
-interface allocations D12 adds.)
+lengths): every node's input and fresh-output byte ranges are disjoint. In a
+chain with at least two interior edges, consecutive interior allocations
+conflict — their shared node consumes one and freshly produces the other —
+so at least two interior buffers are simultaneously placed: the ping-pong
+lower bound, over interior storage only; pinned interface allocations (D12)
+sit on top of it. (Sufficiency of exactly two interior buffers is a separate
+claim, needing equal lengths and compatible alignments.)
 
 **D11 (Provenance opacity).** By 3.2, from a node's perspective an input is
 bytes of declared `(len, align)` — behavior cannot depend on addresses or on

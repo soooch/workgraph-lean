@@ -7,9 +7,9 @@ proves:
 * **D10** (node-local disjointness): a node's fresh output always conflicts
   with each of its inputs (`SWF.mayOverlap_fresh_input`), so 4.5 forces
   address disjointness (`Assignment.fresh_input_disjoint`) — a node's fresh
-  output can never occupy an input's space (ping-pong corollary).  Also the
-  self-consumption impossibility `SWF.bind_ne_fresh` (an instance cannot
-  consume its own fresh output in a well-formed term).
+  output can never occupy an input's space.  Also the self-consumption
+  impossibility `SWF.bind_ne_fresh` (an instance cannot consume its own
+  fresh output in a well-formed term).
 
 * **D12** (interface pinning): τ is a user of every interface allocation and
   nothing follows τ, so for interface `a` the first conjunct of
@@ -21,8 +21,8 @@ proves:
   with *every* allocation (`SWF.mayOverlap_input`) — fully pinned.
 
 The producer/user sets are the relational `IsProducer`/`IsUser` of Stage 3 /
-this file; sentinels participate per 4.2 (σ produces the parameters, τ has an
-input slot per interface allocation).
+this file; the sentinels are slotless events participating per 4.2/4.4 (σ
+produces the parameters, τ is a user of every interface allocation).
 -/
 import WorkGraph.Schedule
 
@@ -167,6 +167,14 @@ theorem SWF.mayOverlap_interface_of_user_not_prec {s : SW P K} (hs : SWF s)
 
 /-! ## §4.5 Arena and packing -/
 
+/-- The domain of `finalize` (4.1): `W_wf` — structurally well-formed (2.4,
+here a well-formed schedule of one) and length-valid (3.3) relative to the
+parameter declarations.  Wherever an assignment is characterized as
+belonging to a valid finalization, this is the term-side hypothesis. -/
+structure Finalizable (pd : ParamDecl P) (s : SW P K) : Prop where
+  swf : SWF s
+  lenValid : s.forget.LenValid pd
+
 /-- Byte interval `[offset, offset + len)` membership. -/
 def InSpan (offset len x : ℕ) : Prop := offset ≤ x ∧ x < offset + len
 
@@ -174,7 +182,9 @@ def InSpan (offset len x : ℕ) : Prop := offset ≤ x ∧ x < offset + len
 functions on allocation IDs (alignment stored as log₂, 1.2): every
 allocation of the term gets an aligned offset, and conflicting allocations
 get disjoint byte intervals.  (An empty-length allocation occupies no bytes,
-so its interval is disjoint from everything, matching `∩ = ∅` in 4.5.) -/
+so its interval is disjoint from everything, matching `∩ = ∅` in 4.5.)
+A feasible finalization (4.5) is a schedule together with an assignment for
+a `Finalizable` term — `finalize : W_wf → G` is defined on nothing less. -/
 structure Assignment (s : SW P K) (len alignLog : Alloc P K → ℕ) where
   offset : Alloc P K → ℕ
   aligned : ∀ a ∈ s.forget.buffers, offset a % 2 ^ alignLog a = 0
@@ -182,9 +192,11 @@ structure Assignment (s : SW P K) (len alignLog : Alloc P K → ℕ) where
     MayOverlap s a b →
     ∀ x, InSpan (offset a) (len a) x → ¬ InSpan (offset b) (len b) x
 
-/-- Arena bounds (4.5/4.6): `size ≥ max (offset + len)`,
-`alignLog ≥ max alignLog`.  (Stated as bounds; the emitted artifact takes
-the least such — minimization is the open objective of §6.) -/
+/-- Arena bounds (4.5/4.6), as a *conservative feasibility (dominance)
+relation*: any `size ≥ max (offset + len)` and `alignLog ≥ max alignLog`
+qualify.  §4.5's exact arena size and alignment are the least elements of
+this relation (`max({0} ∪ …)` / `max({1} ∪ …)`); the emitted artifact takes
+those, and minimizing over assignments is the open objective of §6. -/
 structure ArenaBounds (s : SW P K) (len alignLog : Alloc P K → ℕ)
     (A : Assignment s len alignLog) (size arenaAlignLog : ℕ) : Prop where
   size_bound : ∀ a ∈ s.forget.buffers, A.offset a + len a ≤ size
@@ -192,11 +204,14 @@ structure ArenaBounds (s : SW P K) (len alignLog : Alloc P K → ℕ)
 
 /-- Effective lengths/alignments cohere with the declarations (4.5, 3.3):
 the length of an allocation is its declared length (parameter declaration or
-minting slot declaration), and the effective alignment dominates the declared
-alignment of every declaration-carrying slot resolving to the allocation
-(input slots, fresh slots, and σ's sentinel slots, which carry the parameter
-declarations; τ's slots declare alignment 1 = 2^0, which is dominated
-trivially; passthrough slots carry no declarations). -/
+minting slot declaration), and the alignment function *dominates* the
+declared alignment of every declaration-carrying slot resolving to the
+allocation — input slots and fresh slots — and, for a parameter, its own
+declared alignment, which enters directly: the sentinels carry no slots and
+no declarations (4.2), and passthrough slots carry none either.  Like
+`ArenaBounds`, this is a conservative feasibility (dominance) relation;
+§4.5's *effective alignment* is its least element (the exact max of the
+finitely many declarations resolving to the allocation). -/
 structure DeclCoherent (pd : ParamDecl P) (s : SW P K)
     (len alignLog : Alloc P K → ℕ) : Prop where
   param_len : ∀ p, Alloc.param p ∈ s.forget.buffers →
@@ -213,8 +228,8 @@ structure DeclCoherent (pd : ParamDecl P) (s : SW P K)
 /-! ### D10/D12 at the assignment level -/
 
 /-- **D10, discharged by 4.5**: under any valid assignment, a node's fresh
-output is address-disjoint from each of its inputs.  Corollary: a chain's
-steady state needs two live buffers (ping-pong). -/
+output is address-disjoint from each of its inputs — for positive lengths,
+every node's input and fresh-output byte ranges are disjoint. -/
 theorem Assignment.fresh_input_disjoint {s : SW P K}
     {len alignLog : Alloc P K → ℕ} (A : Assignment s len alignLog)
     (hs : SWF s) {i : ℕ} {l : LeafInst P K} (hl : s.leaves[i]? = some l)

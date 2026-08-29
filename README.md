@@ -45,10 +45,12 @@ lake build
 * **Well-formedness**: the inductive `WF` carves out exactly the terms built
   by the formations of 2.4 — parameter-valued leaf bindings (Instantiate),
   `ThetaFits` (dom(θ) exactly `inputs(W₂)`, range in `outputs(W₁)` — 2.4,
-  §6 "Partial θ rejected"), mint distinctness (2.1).  2.4's "operands never
-  share node instances; reuse requires re-instantiation" surfaces as the
-  mint-distinctness side condition — pinned by
-  `Examples.not_swf_duplicate_leaf` / `Examples.swf_two_instances`.
+  §6 "Partial θ rejected"), and 2.4's formation-level surface of 2.1's
+  global distinctness: the operands of Series and Par mint disjoint
+  produced-ID sets (`MintDisjoint`).  Node instances are leaf *occurrences*
+  (positions in the SP tree, 1.1) — identity needs no separate machinery;
+  what is policed is minted names, pinned by
+  `Examples.not_swf_mint_collision` / `Examples.swf_two_instances`.
 
 * **Node instances** (4.3): identified by index into the SP tree's
   left-to-right leaf enumeration; σ/τ are the extra `PNode`s of 4.2.
@@ -68,22 +70,27 @@ lake build
 | D3 composition closure | `WF.inputs_isParam`, `WF.param_mem_inputs_of_mem_outputs`, `WF.param_mem_inputs_of_mem_buffers`, `WF.param_occurs_iff`, `ThetaFits.inputs_rebind_subset_outputs` (totality of `bind`/`res` holds by type) |
 | D4 externality | `ThetaFits.paramDom` (+ `Subst.ParamDom.apply_prod`: produced-valued bindings are never rewritten), `WF.mem_minted_of_prod_mem_buffers`, `WF.prod_mem_buffers_of_mem_minted` |
 | D5 unfolded internals | `WF.internal_mkSeries`, `WF.internal_par` |
-| D6 locality of deadness | proved inline (the `huser` step) inside the D14 theorems |
+| D6 locality of deadness | forward direction only (every user of an internal allocation of the earlier arm is an instance of that arm), proved inline as the `huser` step of the D14 theorems; the converse — open-world exposure of interface members via countercontexts — is not formalized |
 | D7 no in-place / unique writer | `SWF.mintsAt_unique`, `SWF.exists_producer` (with 3.1 semantic; "no syntax for a second writer" is structural: `prov` re-exposes untouched) |
 | D8 ≺ strict partial order | `SW.prec_irrefl`, `SW.prec_asymm` (transitivity by construction); the linearization embedding is `SW.linRank`/`SW.nodeRank` + `SGen.linRank_lt_linRank`; endpoints: `SW.not_prec_src`, `SW.not_sink_prec`, `SW.src_prec_sink` |
 | D9 dataflow respects ≺ | `SWF.producer_prec_consumer`, `producer_prec_sink` |
-| D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` (ping-pong) |
+| D10 node-local disjointness | `SWF.mayOverlap_fresh_input`, `SWF.bind_ne_fresh`; discharged by 4.5: `Assignment.fresh_input_disjoint` (per-node input/fresh-output byte disjointness; the spec's chain corollary — needing ≥ 2 interior edges — is not separately formalized) |
 | D12 interface pinning | `SWF.interface_mayOverlap_iff` (the reduction), `SWF.mayOverlap_interface`, `SWF.mayOverlap_input` (fully pinned), `SWF.interface_not_mayOverlap_of_finished` (an interface output may reuse space wholly finished before its producer), `SWF.mayOverlap_interface_of_user_not_prec` (nothing placed over it from its producer onward); discharged by 4.5: `Assignment.interface_disjoint` |
 | D13 series order exceeds data dependency | load-bearing inside the D14 proofs (the `seriesCross` step orders dead ends too); the ordering clauses themselves are the `SGen` generators |
-| D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_mayOverlap_internal_fresh`, `SWF.conc_mayOverlap_fresh` (+ `SW.conc_prec_side`: ≺ never crosses a concurrent Par) |
+| D14 reuse legality | `SWF.series_not_mayOverlap_internal_fresh`, `SWF.par12_not_mayOverlap_internal_fresh` and its `seq(2,1)` mirror `SWF.par21_not_mayOverlap_internal_fresh`; concurrent Par: `SWF.conc_mayOverlap_of_cross_users` — any two allocations with users on opposite branches of a concurrent Par *anywhere in the schedule* conflict (via `SW.ConcBlock.not_cross_prec`: ≺ never crosses a concurrent Par, even inside a composite), with `SWF.conc_mayOverlap_fresh` the root-level fresh/fresh special case |
 
 Not formalized (out of scope, faithful to the spec's own scoping): 3.1/3.2
 byte-level execution semantics (the model's ordering side is captured by
 4.3's `≺` and D9; extensionality D11 would need a denotational layer), the
-finalization *algorithm* and packing objective (§4.5 minimization / D15
+finalization *algorithm* and selection policy (§4.5 minimization / D15
 NP-hardness — the §6 open objective), and the emitted-artifact ABI
-(4.6/4.7).  `Assignment`/`ArenaBounds`/`DeclCoherent` state exactly the
-constraint system such an algorithm must satisfy, and D10/D12/D14 are the
+(4.6/4.7).  `Finalizable` (structural well-formedness + §3.3 length
+validity) is the formal counterpart of `finalize`'s domain `W_wf`
+(3.3/4.1); an assignment belongs to a valid finalization only for a
+`Finalizable` term.  `Assignment`/`ArenaBounds`/`DeclCoherent` are
+*conservative feasibility (dominance) relations* for the §4.5 constraint
+system — §4.5's exact effective alignment and arena size/alignment are
+their least elements, not separately defined here — and D10/D12/D14 are
 correctness facts any packer inherits.
 
 ## Worked example
@@ -93,7 +100,9 @@ correctness facts any packer inherits.
 proves: well-formedness, §3.3 validation, the interface/internal split
 (input `x`, output `t₁`, internal `t₀`), A ≺ B (both from the Series clause
 and re-derived from dataflow via D9), and the concrete D10/D12 conflicts.
-It also pins instance-by-instantiation (1.1/2.4): a Par of the *same* leaf
-instance is rejected in every mode (`not_swf_duplicate_leaf`), while two
-distinct instantiations of the same primitive signature compose fine
+It also pins produced-ID distinctness at formation (1.1/2.1/2.4): a Par
+whose two occurrences mint the same produced ID is rejected in every mode
+(`not_swf_mint_collision` — a produced-ID collision test; the two positions
+are distinct instances by occurrence identity), while two occurrences of
+the same primitive signature with disjoint minted IDs compose fine
 (`swf_two_instances`).
